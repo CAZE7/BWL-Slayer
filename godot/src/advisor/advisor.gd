@@ -174,6 +174,11 @@ func _emit_event_finding(
 	EventBus.advisor_message_added.emit(message)
 
 
+## Kilogramm-Menge formatieren (mit Tausenderpunkt).
+func _format_kg(value: float) -> String:
+	return "%s kg" % _format_int(value)
+
+
 ## Ganzzahl formatieren (mit Tausenderpunkt).
 func _format_int(value: float) -> String:
 	var negative := value < 0.0
@@ -229,6 +234,7 @@ func analyze() -> Dictionary:
 	findings.append_array(_analyze_capital_binding(sim, machines))
 	findings.append_array(_analyze_lost_orders(sim))
 	findings.append_array(_analyze_financing(sim))
+	findings.append_array(_analyze_material_supply(sim))
 
 	current_analysis = {
 		"day": sim.day,
@@ -381,6 +387,71 @@ func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 				"lesson": "Der Kapitalwert ist die entscheidende Entscheidungsgröße: KW > 0 bedeutet Wertschöpfung.",
 				"action": "Öffne das Investitionsmodul und variiere die Menge.",
 			})
+	return out
+
+
+## Materialversorgung: reicht der Bestand bis zur naechsten Lieferung?
+##
+## Material ohne Vorlauf ist der haeufigste Grund fuer stillstehende
+## Produktion. Der Berater warnt, BEVOR die Anlage stoppt – nicht
+## danach.
+func _analyze_material_supply(sim: Node) -> Array:
+	var out: Array = []
+	var daily_need: float = sim.daily_material_need()
+	if daily_need <= 0.0:
+		return out
+
+	var coverage: float = sim.material_coverage_days()
+	var lead_time: int = Simulation.MATERIAL_LEAD_TIME_DAYS
+
+	# Der Bestand reicht nicht bis zur naechsten Lieferung.
+	if coverage < lead_time:
+		var in_transit: float = sim.material_in_transit()
+		var body := (
+			"Der Materialbestand reicht noch %d Tage. Die Lieferzeit betraegt "
+			+ "%d Tage. Ohne Nachbestellung stoppt die Produktion in %d Tagen."
+		) % [int(coverage), lead_time, int(coverage)]
+		if in_transit > 0.0:
+			body += " Auf dem Weg sind noch %s kg." % _format_kg(in_transit)
+		out.append({
+			"id": "material_short_%d" % int(sim.day),
+			"severity": "warning",
+			"title": "Materialbestand reicht nicht bis zur Lieferung",
+			"analysis": body,
+			"questions": [
+				"Wie viele Tage Produktion sichert der Bestand noch?",
+				"Was kostet es, jetzt zu bestellen – und was kostet ein Produktionsstopp?",
+			],
+			"lesson": (
+				"Material ohne Vorlauf ist ein stiller Kostenblock: Die "
+				+ "Anlage steht, die Fixkosten laufen weiter. Der Bestand "
+				+ "muss immer die Lieferzeit überbrücken."
+			),
+			"action": "Öffne die Produktionsansicht und bestelle Material nach.",
+		})
+		return out
+
+	# Der Bestand ist knapp, reicht aber noch.
+	if coverage < lead_time * 2.0:
+		out.append({
+			"id": "material_tight_%d" % int(sim.day),
+			"severity": "info",
+			"title": "Materialbestand wird knapp",
+			"analysis": (
+				"Der Bestand reicht noch %d Tage bei einem Tagesbedarf von "
+				+ "%s kg. Eine Bestellung sollte bald aufgegeben werden."
+			) % [int(coverage), _format_kg(daily_need)],
+			"questions": [
+				"Wie lange reicht der Bestand bei voller Auslastung?",
+				"Welche Bestellmenge deckt die nächsten 30 Tage?",
+			],
+			"lesson": (
+				"Der Materialvorlauf bestimmt, wie lange die Anlage ohne "
+				+ "Unterbrechung laufen kann. Er ist Teil der Planung, "
+				+ "nicht der Beschaffung."
+			),
+			"action": "Prüfe die Materialbestände in der Produktionsansicht.",
+		})
 	return out
 
 

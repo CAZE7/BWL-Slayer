@@ -997,14 +997,9 @@ func _fill_storage(box: VBoxContainer) -> void:
 	box.add_child(value)
 
 	# Materialbedarf der Anlagen
-	var daily_need := 0.0
-	var running: Array[MachineInstance] = Simulation.active_machines()
-	for m in running:
-		daily_need += m.spec.material_per_unit * m.spec.capacity_units_per_year / 360.0
+	var daily_need: float = Simulation.daily_material_need()
 	if daily_need > 0.0:
-		var cover_days := 0.0
-		if daily_need > 0.0:
-			cover_days = Simulation.inventory_material / daily_need
+		var cover_days: float = Simulation.material_coverage_days()
 		var cover := Label.new()
 		cover.text = "Tagesbedarf: %s kg · Reichweite: %d Tage" % [
 			String.num(daily_need, 1), int(cover_days)
@@ -1015,8 +1010,33 @@ func _fill_storage(box: VBoxContainer) -> void:
 			UI["danger"] if cover_days < 10.0 else UI["text_muted"])
 		box.add_child(cover)
 
+		# Material auf dem Weg: Das zaehlt zur Reichweite dazu, ist
+		# aber noch nicht im Lager.
+		var in_transit: float = Simulation.material_in_transit()
+		if in_transit > 0.0:
+			var transit_label := Label.new()
+			transit_label.text = "Auf dem Weg: %s kg" % String.num(in_transit, 0)
+			transit_label.add_theme_font_size_override("font_size", 11)
+			transit_label.add_theme_color_override("font_color", UI["accent"])
+			box.add_child(transit_label)
+
+		# Ist die Lieferzeit laenger als die Reichweite, laeuft die
+		# Produktion leer, bevor das Material da ist.
+		var lead_days := Simulation.MATERIAL_LEAD_TIME_DAYS
+		if cover_days < lead_days:
+			var warning := Label.new()
+			warning.text = "Reichweite kürzer als die Lieferzeit (%d Tage)." % lead_days
+			warning.add_theme_font_size_override("font_size", 11)
+			warning.add_theme_color_override("font_color", UI["danger"])
+			box.add_child(warning)
+
 	# Einkauf: mehrere Mengen, damit der Spieler nicht jede Menge
 	# einzeln eingeben muss.
+	#
+	# Zwei Wege: sofort kaufen (die Ware ist sofort da) oder mit
+	# Lieferzeit bestellen (die Zahlung erfolgt sofort, die Ware
+	# kommt in einigen Tagen). Der Spieler muss also zwischen
+	# Liquiditaet und Planungssicherheit entscheiden.
 	var buy_row := HBoxContainer.new()
 	buy_row.add_theme_constant_override("separation", 6)
 	for amount in [500.0, 2000.0, 10000.0]:
@@ -1024,6 +1044,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 		button.text = "+ %s kg" % String.num(amount, 0)
 		button.custom_minimum_size = Vector2(0, 30)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.tooltip_text = "Sofort kaufen – die Ware ist sofort im Lager."
 		button.pressed.connect(func():
 			Simulation.buy_material(amount)
 			_refresh_sidebar()
@@ -1031,8 +1052,36 @@ func _fill_storage(box: VBoxContainer) -> void:
 		buy_row.add_child(button)
 	box.add_child(buy_row)
 
+	var order_row := HBoxContainer.new()
+	order_row.add_theme_constant_override("separation", 6)
+	var order_button := Button.new()
+	order_button.text = "Bestellen (+ %d Tage)" % Simulation.MATERIAL_LEAD_TIME_DAYS
+	order_button.custom_minimum_size = Vector2(0, 30)
+	order_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	order_button.tooltip_text = (
+		"Zahlung sofort, Lieferung in %d Tagen. "
+		% Simulation.MATERIAL_LEAD_TIME_DAYS
+		+ "Das Material muss bis dahin reichen."
+	)
+	order_button.pressed.connect(func():
+		var needed: float = Simulation.daily_material_need() * 30.0
+		var result := Simulation.order_material(maxf(500.0, needed))
+		if not bool(result.get("ok", false)):
+			EventBus.notify(
+				"Bestellung nicht moeglich",
+				String(result.get("error", "Die Bestellung wurde abgelehnt.")),
+				"warning"
+			)
+		_refresh_sidebar()
+	)
+	order_row.add_child(order_button)
+	box.add_child(order_row)
+
 	var price := Label.new()
-	price.text = "Materialpreis: %s €/kg" % BWLEngine.format_eur(Simulation.material_price(), 2)
+	price.text = "Materialpreis: %s €/kg · Lieferzeit %d Tage" % [
+		BWLEngine.format_eur(Simulation.material_price(), 2),
+		Simulation.MATERIAL_LEAD_TIME_DAYS,
+	]
 	price.add_theme_font_size_override("font_size", 11)
 	price.add_theme_color_override("font_color", UI["text_faint"])
 	box.add_child(price)

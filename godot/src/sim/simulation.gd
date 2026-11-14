@@ -19,6 +19,11 @@ class_name SimulationEngine
 
 const DAYS_PER_YEAR := 360
 const DAYS_PER_MONTH := 30
+## Standardlieferzeit des Materialmarkts in Tagen.
+##
+## Material kommt nicht sofort. Der Spieler muss den Bestand planen:
+## unterhalb des Vorlaufs stoppt die Produktion.
+const MATERIAL_LEAD_TIME_DAYS := 5
 const MONTH_DAYS := 30
 
 ## Geschwindigkeitsstufen (Tage pro Sekunde)
@@ -39,6 +44,7 @@ var specs: Dictionary = {}          ## spec_id -> MachineSpec
 var orders: Array = []              ## Kundenaufträge (offen)
 var completed_orders: Array = []    ## abgeschlossene Kundenaufträge
 var deliveries: Array = []          ## laufende Lieferungen
+var material_deliveries: Array = [] ## laufende Materiallieferungen
 var inventory_material: float = 0.0 ## kg Material im Lager
 var day_accumulator: float = 0.0
 
@@ -115,6 +121,7 @@ func reset() -> void:
 	orders.clear()
 	completed_orders.clear()
 	deliveries.clear()
+	material_deliveries.clear()
 	inventory_material = 0.0
 	economy = EconomyState.new()
 	stats = {
@@ -185,6 +192,120 @@ func buy_material(quantity_kg: float) -> Dictionary:
 	return {"ok": true, "quantity": quantity_kg, "price": price, "cost": cost}
 
 
+## Bestellt Material mit Lieferzeit.
+##
+## Die Zahlung erfolgt sofort, die Ware kommt aber erst nach der
+## Lieferzeit. Das ist der Unterschied zum Sofortkauf: der Betrieb
+## muss den Bestand planen, sonst laeuft die Produktion leer.
+##
+## `lead_time_days` von 0 bedeutet Sofortlieferung (wie `buy_material`).
+## Ohne Angabe wird die Standardlieferzeit des Materialmarkts
+## verwendet.
+func order_material(quantity_kg: float, lead_time_days: int = -1) -> Dictionary:
+	if quantity_kg <= 0.0:
+		return {"ok": false, "error": "Menge muss positiv sein."}
+
+	var price := _average_material_price()
+	if price <= 0.0:
+		return {
+			"ok": false,
+			"error": "Materialpreis unbekannt – im Maschinenkatalog nachsehen.",
+		}
+
+	var cost := price * quantity_kg
+	if economy.cash < cost:
+		return {
+			"ok": false,
+			"error": "Nicht genug Kapital: %s € benötigt, %s € verfügbar." % [
+				_format_int(cost), _format_int(economy.cash)
+			],
+		}
+
+	var days := lead_time_days if lead_time_days >= 0 else MATERIAL_LEAD_TIME_DAYS
+	if days <= 0:
+		# Sofortlieferung: derselbe Weg wie der einfache Einkauf.
+		return buy_material(quantity_kg)
+
+	# Zahlung bei Bestellung, Ware kommt spaeter.
+	economy.move_cash(-cost)
+	stats["material_bought_kg"] = float(stats.get("material_bought_kg", 0.0)) + quantity_kg
+	stats["material_spend"] = float(stats.get("material_spend", 0.0)) + cost
+
+	var delivery := {
+		"quantity": quantity_kg,
+		"price": price,
+		"cost": cost,
+		"ordered_day": day,
+		"days_remaining": days,
+		"lead_time_days": days,
+		"status": "in_transit",
+	}
+	material_deliveries.append(delivery)
+	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Material bestellt",
+		"%s kg für %s € bestellt. Ankunft in %d Tagen – bis dahin muss "
+		% [_format(quantity_kg), _format_int(cost), days]
+		+ "der vorhandene Bestand reichen.",
+		"info"
+	)
+	return {"ok": true, "quantity": quantity_kg, "price": price, "cost": cost, "lead_time_days": days}
+
+
+## Schreibt die laufenden Materiallieferungen weiter.
+##
+## Ist die Lieferzeit abgelaufen, geht die Ware ins Lager und der
+## Bestand wird bewertet.
+func _progress_material_deliveries() -> void:
+	if material_deliveries.is_empty():
+		return
+	var still_open: Array = []
+	for delivery in material_deliveries:
+		var days_left := int(delivery.get("days_remaining", 0)) - 1
+		if days_left > 0:
+			delivery["days_remaining"] = days_left
+			still_open.append(delivery)
+			continue
+		# Die Ware ist angekommen.
+		var quantity := float(delivery.get("quantity", 0.0))
+		inventory_material += quantity
+		economy.inventory_value = inventory_material * float(delivery.get("price", 0.0))
+		EventBus.notify(
+			"Material angekommen",
+			"%s kg Material sind im Lager eingetroffen." % _format(quantity),
+			"success"
+		)
+	material_deliveries = still_open
+
+
+## Wie viele Tage reicht der Bestand noch bei aktueller Produktion?
+##
+## Das ist die zentrale Planungsgröße: unterhalb des Materialvorlaufs
+## muss bestellt werden, sonst stoppt die Produktion.
+func material_coverage_days() -> float:
+	var daily_need := daily_material_need()
+	if daily_need <= 0.0:
+		return INF
+	return inventory_material / daily_need
+
+
+## Der tägliche Materialbedarf aller betriebsbereiten Anlagen (in kg).
+func daily_material_need() -> float:
+	var daily_need := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		daily_need += m.spec.material_per_unit * m.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+	return daily_need
+
+
+## Das bereits bestellte, aber noch nicht gelieferte Material (kg).
+func material_in_transit() -> float:
+	var total := 0.0
+	for delivery in material_deliveries:
+		total += float(delivery.get("quantity", 0.0))
+	return total
+
+
 # ==================================================================
 # Zeitsteuerung
 # ==================================================================
@@ -225,6 +346,7 @@ func advance_day() -> void:
 	stats["days_simulated"] = int(stats["days_simulated"]) + 1
 
 	_progress_deliveries()
+	_progress_material_deliveries()
 	_progress_production()
 	_process_customer_orders()
 	_generate_demand()
@@ -1041,6 +1163,7 @@ func to_dict() -> Dictionary:
 		"orders": orders,
 		"completed_orders": completed_orders,
 		"deliveries": deliveries,
+		"material_deliveries": material_deliveries,
 		"inventory_material": inventory_material,
 		"stats": stats,
 	}
@@ -1067,6 +1190,7 @@ func from_dict(data: Dictionary) -> void:
 	orders = data.get("orders", [])
 	completed_orders = data.get("completed_orders", [])
 	deliveries = data.get("deliveries", [])
+	material_deliveries = data.get("material_deliveries", [])
 	inventory_material = float(data.get("inventory_material", 0.0))
 	stats = data.get("stats", stats)
 

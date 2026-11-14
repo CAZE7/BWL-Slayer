@@ -30,6 +30,8 @@ static func run(t: TestFramework) -> void:
 	_test_full_year(t)
 	t.suite("Ablauf · Kassenlogik ohne Doppelbuchung")
 	_test_cash_logic(t)
+	t.suite("Ablauf · Materiallieferung mit Vorlauf")
+	_test_material_logistics(t)
 
 
 # ------------------------------------------------------------------
@@ -680,5 +682,129 @@ static func _test_cash_logic(t: TestFramework) -> void:
 		"Jahresabschluss ohne Aufwand veraendert die Kasse nicht",
 		sim3.economy.cash,
 		cash_before3,
+		0.01
+	)
+
+
+# ------------------------------------------------------------------
+# Material braucht Vorlauf.
+#
+# Die Zahlung erfolgt bei der Bestellung, die Ware kommt erst
+# nach der Lieferzeit. Bis dahin muss der vorhandene Bestand
+# reichen – sonst laeuft die Produktion leer.
+# ------------------------------------------------------------------
+static func _test_material_logistics(t: TestFramework) -> void:
+	var spec := _make_spec(&"MATLOG", 1000.0, 0.0, 0.0, 0.0, 1000.0)
+	spec.material_per_unit = 2.0
+	spec.material_price_per_kg = 2.50
+
+	var sim := SimulationEngine.new()
+	sim.specs[spec.id] = spec
+	var m := MachineInstance.new(spec, "matlog-1")
+	m.state = MachineInstance.State.ACTIVE
+	m.commissioned_year = 1
+	sim.machines["matlog-1"] = m
+
+	# Der Materialpreis ergibt sich aus der Anlage.
+	t.check_approx("Materialpreis korrekt", sim.material_price(), 2.50, 0.01)
+
+	# Der Tagesbedarf: 2 kg/Stueck bei 1.000 Stuecken p.a.
+	t.check_approx(
+		"Tagesbedarf korrekt",
+		sim.daily_material_need(),
+		2.0 * 1000.0 / 360.0,
+		0.01
+	)
+
+	# Bestellen mit Lieferzeit: Zahlung sofort, Ware noch nicht da.
+	var cash_before := sim.economy.cash
+	var order := sim.order_material(1_000.0, 5)
+	t.check_true("Bestellung moeglich", bool(order.get("ok", false)))
+	t.check_approx(
+		"Zahlung bei Bestellung",
+		sim.economy.cash,
+		cash_before - 2_500.0,
+		0.01
+	)
+	t.check_approx(
+		"Ware noch nicht im Lager",
+		sim.inventory_material,
+		0.0,
+		0.01
+	)
+	t.check_approx(
+		"Material auf dem Weg",
+		sim.material_in_transit(),
+		1_000.0,
+		0.01
+	)
+
+	# Vier Tage laufen: die Ware ist noch nicht da.
+	for _i in range(4):
+		sim.advance_day()
+	t.check_approx(
+		"Ware nach vier Tagen noch nicht da",
+		sim.inventory_material,
+		0.0,
+		0.01
+	)
+	t.check_approx(
+		"Lieferung noch unterwegs",
+		sim.material_in_transit(),
+		1_000.0,
+		0.01
+	)
+
+	# Der fuenfte Tag: die Ware kommt an.
+	sim.advance_day()
+	t.check_approx(
+		"Ware am Liefertag da",
+		sim.inventory_material,
+		1_000.0,
+		0.01
+	)
+	t.check_approx(
+		"Kein Material mehr unterwegs",
+		sim.material_in_transit(),
+		0.0,
+		0.01
+	)
+
+	# Die Reichweite entspricht jetzt dem Bestand.
+	t.check_approx(
+		"Reichweite berechenbar",
+		sim.material_coverage_days(),
+		1_000.0 / (2.0 * 1000.0 / 360.0),
+		1.0
+	)
+
+	# Ein Sofortkauf liefert sofort.
+	var cash_before2 := sim.economy.cash
+	var direct := sim.buy_material(500.0)
+	t.check_true("Sofortkauf moeglich", bool(direct.get("ok", false)))
+	t.check_approx(
+		"Ware sofort im Lager",
+		sim.inventory_material,
+		1_500.0,
+		0.01
+	)
+	t.check_approx(
+		"Sofortkauf mindert die Kasse",
+		sim.economy.cash,
+		cash_before2 - 1_250.0,
+		0.01
+	)
+
+	# Der Spielstand muss die Lieferung ueberstehen.
+	var sim2 := SimulationEngine.new()
+	sim2.specs[spec.id] = spec
+	sim2.order_material(800.0, 4)
+	var restored := SimulationEngine.new()
+	restored.specs[spec.id] = spec
+	restored.from_dict(sim2.to_dict())
+	t.check_approx(
+		"Materiallieferung im Spielstand",
+		restored.material_in_transit(),
+		800.0,
 		0.01
 	)
