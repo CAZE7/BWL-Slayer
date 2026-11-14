@@ -307,3 +307,4 @@ Wirtschaftszustände, Speichervorgänge, Export und Artefakt.
 - `docs/PRODUCT-VISION.md` — wofür das Spiel steht
 - `docs/GAME-DESIGN.md` — die Spielregeln
 - `docs/TECHNICAL-ROADMAP.md` — Umsetzungsplan
+- `docs/WINDOWS-ACCEPTANCE.md` — Abnahme auf einem echten Windows-PC

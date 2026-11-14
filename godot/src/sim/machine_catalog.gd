@@ -26,6 +26,27 @@ const PACKER_ID := &"MACHINE_D"
 
 
 ## Alle verfügbaren Maschinen.
+## Die Materialarten im Spiel.
+##
+## Verschiedene Materialarten werden getrennt gelagert, getrennt
+## bestellt und getrennt bewertet. Die Förderbandlinie verbraucht
+## Rohmaterial, der Verpackungsautomat Verpackungsmaterial. Wer beide
+## betreibt, muss beide Bestände im Blick behalten.
+const MATERIAL_STEEL := &"stahl"
+const MATERIAL_PACKAGING := &"verpackung"
+
+
+## Die Bezeichnung der Materialart für die Anzeige.
+static func material_label(material_type: StringName) -> String:
+	match material_type:
+		MATERIAL_STEEL:
+			return "Stahl"
+		MATERIAL_PACKAGING:
+			return "Verpackung"
+		_:
+			return "Material"
+
+
 static func all() -> Array[MachineSpec]:
 	return [car_a(), car_b(), conveyor(), packer()]
 
@@ -46,6 +67,7 @@ static func car_a() -> MachineSpec:
 	spec.product_name = "Transportleistung"
 	spec.material_per_unit = 0.0
 	spec.material_price_per_kg = 0.0
+	spec.material_type = &""
 	spec.labor_hours_per_year = 2200.0
 	spec.labor_rate_per_hour = 24.0
 	spec.delivery_days = 7
@@ -71,6 +93,7 @@ static func car_b() -> MachineSpec:
 	spec.product_name = "Transportleistung"
 	spec.material_per_unit = 0.0
 	spec.material_price_per_kg = 0.0
+	spec.material_type = &""
 	spec.labor_hours_per_year = 2200.0
 	spec.labor_rate_per_hour = 24.0
 	spec.delivery_days = 9
@@ -94,6 +117,7 @@ static func conveyor() -> MachineSpec:
 	spec.price_per_unit = 21.0
 	spec.capacity_units_per_year = 180000.0
 	spec.product_name = "Halbfertigteil"
+	spec.material_type = MATERIAL_STEEL
 	spec.material_per_unit = 2.5
 	spec.material_price_per_kg = 1.4
 	spec.labor_hours_per_year = 1800.0
@@ -119,6 +143,7 @@ static func packer() -> MachineSpec:
 	spec.price_per_unit = 18.0
 	spec.capacity_units_per_year = 90000.0
 	spec.product_name = "Verpackte Ware"
+	spec.material_type = MATERIAL_PACKAGING
 	spec.material_per_unit = 0.6
 	spec.material_price_per_kg = 1.1
 	spec.labor_hours_per_year = 1200.0

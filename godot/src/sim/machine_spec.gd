@@ -40,6 +40,12 @@ extends Resource
 ## Materialverbrauch je Einheit (kg)
 @export var material_per_unit: float = 0.0
 @export var material_price_per_kg: float = 0.0
+## Die Materialart, die diese Anlage verbraucht.
+##
+## Verschiedene Materialarten werden getrennt gelagert und getrennt
+## bestellt. Eine Verpackungslinie braucht anderes Material als eine
+## Förderbandlinie – das ist die Grundlage der Produktionskette.
+@export var material_type: StringName = &""
 ## Personalbedarf (Arbeitsstunden pro Jahr)
 @export var labor_hours_per_year: float = 0.0
 @export var labor_rate_per_hour: float = 0.0

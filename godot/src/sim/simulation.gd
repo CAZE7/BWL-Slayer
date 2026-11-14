@@ -45,7 +45,13 @@ var orders: Array = []              ## Kundenaufträge (offen)
 var completed_orders: Array = []    ## abgeschlossene Kundenaufträge
 var deliveries: Array = []          ## laufende Lieferungen
 var material_deliveries: Array = [] ## laufende Materiallieferungen
-var inventory_material: float = 0.0 ## kg Material im Lager
+var inventory_material: float = 0.0 ## kg Material im Lager (Sonderfall ohne Typ)
+## Die Materialbestände je Materialart: material_type -> kg
+##
+## Jede Materialart wird getrennt gelagert, bestellt und bewertet.
+## Das ist die Grundlage der Produktionskette: Eine Förderbandlinie
+## braucht Stahl, ein Verpackungsautomat Verpackungsmaterial.
+var material_inventory: Dictionary = {}
 var day_accumulator: float = 0.0
 
 ## Produktionseinstellungen (vom Spieler steuerbar)
@@ -73,6 +79,7 @@ func _ready() -> void:
 	# Startbestand: ein Grundstock Material, damit die Produktion nach
 	# der ersten Investition anlaufen kann.
 	inventory_material = 0.0
+	material_inventory.clear()
 	# Die Simulation startet pausiert. Der Spieler startet sie bewusst –
 	# und headless-Testläufe sollen nicht endlos ticken.
 	running = false
@@ -123,6 +130,7 @@ func reset() -> void:
 	deliveries.clear()
 	material_deliveries.clear()
 	inventory_material = 0.0
+	material_inventory.clear()
 	economy = EconomyState.new()
 	stats = {
 		"days_simulated": 0,
@@ -155,11 +163,11 @@ func reset() -> void:
 ## ist ein perfekter Wettbewerb.
 ##
 ## Rückgabe: {ok, quantity, price, cost}
-func buy_material(quantity_kg: float) -> Dictionary:
+func buy_material(quantity_kg: float, material_type: StringName = &"") -> Dictionary:
 	if quantity_kg <= 0.0:
 		return {"ok": false, "error": "Menge muss positiv sein."}
 
-	var price := _average_material_price()
+	var price := material_price(material_type)
 	if price <= 0.0:
 		return {
 			"ok": false,
@@ -176,16 +184,17 @@ func buy_material(quantity_kg: float) -> Dictionary:
 		}
 
 	economy.move_cash(-cost)
-	inventory_material += quantity_kg
-	economy.inventory_value = inventory_material * price
+	set_material_stock(material_type, material_stock(material_type) + quantity_kg)
 	stats["material_bought_kg"] = float(stats.get("material_bought_kg", 0.0)) + quantity_kg
 	stats["material_spend"] = float(stats.get("material_spend", 0.0)) + cost
 
 	EventBus.economy_changed.emit(economy.to_dict())
 	EventBus.notify(
 		"Material eingekauft",
-		"%s kg Material für %s € ins Lager aufgenommen." % [
-			_format(quantity_kg), _format_int(cost)
+		"%s kg %s für %s € ins Lager aufgenommen." % [
+			_format(quantity_kg),
+			MachineCatalog.material_label(material_type),
+			_format_int(cost),
 		],
 		"success"
 	)
@@ -201,11 +210,13 @@ func buy_material(quantity_kg: float) -> Dictionary:
 ## `lead_time_days` von 0 bedeutet Sofortlieferung (wie `buy_material`).
 ## Ohne Angabe wird die Standardlieferzeit des Materialmarkts
 ## verwendet.
-func order_material(quantity_kg: float, lead_time_days: int = -1) -> Dictionary:
+func order_material(
+	quantity_kg: float, lead_time_days: int = -1, material_type: StringName = &""
+) -> Dictionary:
 	if quantity_kg <= 0.0:
 		return {"ok": false, "error": "Menge muss positiv sein."}
 
-	var price := _average_material_price()
+	var price := material_price(material_type)
 	if price <= 0.0:
 		return {
 			"ok": false,
@@ -224,7 +235,7 @@ func order_material(quantity_kg: float, lead_time_days: int = -1) -> Dictionary:
 	var days := lead_time_days if lead_time_days >= 0 else MATERIAL_LEAD_TIME_DAYS
 	if days <= 0:
 		# Sofortlieferung: derselbe Weg wie der einfache Einkauf.
-		return buy_material(quantity_kg)
+		return buy_material(quantity_kg, material_type)
 
 	# Zahlung bei Bestellung, Ware kommt spaeter.
 	economy.move_cash(-cost)
@@ -235,6 +246,7 @@ func order_material(quantity_kg: float, lead_time_days: int = -1) -> Dictionary:
 		"quantity": quantity_kg,
 		"price": price,
 		"cost": cost,
+		"material_type": String(material_type),
 		"ordered_day": day,
 		"days_remaining": days,
 		"lead_time_days": days,
@@ -244,12 +256,121 @@ func order_material(quantity_kg: float, lead_time_days: int = -1) -> Dictionary:
 	EventBus.economy_changed.emit(economy.to_dict())
 	EventBus.notify(
 		"Material bestellt",
-		"%s kg für %s € bestellt. Ankunft in %d Tagen – bis dahin muss "
-		% [_format(quantity_kg), _format_int(cost), days]
+		"%s kg %s für %s € bestellt. Ankunft in %d Tagen – bis dahin muss "
+		% [
+			_format(quantity_kg),
+			MachineCatalog.material_label(material_type),
+			_format_int(cost),
+			days,
+		]
 		+ "der vorhandene Bestand reichen.",
 		"info"
 	)
 	return {"ok": true, "quantity": quantity_kg, "price": price, "cost": cost, "lead_time_days": days}
+
+
+## Der Bestand einer Materialart in kg.
+##
+## Materialarten ohne Typ fallen auf den Einheitsbestand zurueck.
+## Damit bleibt der einfache Fall (eine Materialart) unveraendert
+## funktionsfaehig.
+func material_stock(material_type: StringName) -> float:
+	if material_type == &"":
+		return inventory_material
+	return float(material_inventory.get(material_type, 0.0))
+
+
+## Setzt den Bestand einer Materialart.
+func set_material_stock(material_type: StringName, quantity_kg: float) -> void:
+	if material_type == &"":
+		inventory_material = maxf(0.0, quantity_kg)
+	else:
+		material_inventory[material_type] = maxf(0.0, quantity_kg)
+	_revalue_inventory()
+
+
+## Die Materialarten, die aktuell gebraucht werden.
+##
+## Nur die tatsaechlich benoetigten Arten werden angezeigt und
+## bestellt. Das haelt die Oberflaeche auf das Wesentliche.
+func required_material_types() -> Array[StringName]:
+	var types: Array[StringName] = []
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		var mt := m.spec.material_type
+		if mt == &"" or m.spec.material_per_unit <= 0.0:
+			continue
+		if not types.has(mt):
+			types.append(mt)
+	# Auch bestelltes Material gehoert in die Liste, sonst waere eine
+	# laufende Lieferung unsichtbar.
+	for delivery in material_deliveries:
+		var mt := StringName(delivery.get("material_type", ""))
+		if mt != &"" and not types.has(mt):
+			types.append(mt)
+	return types
+
+
+## Der Tagesbedarf einer Materialart (kg).
+func daily_material_need(material_type: StringName = &"") -> float:
+	var daily_need := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		if material_type != &"" and m.spec.material_type != material_type:
+			continue
+		daily_need += m.spec.material_per_unit * m.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+	return daily_need
+
+
+## Die Reichweite einer Materialart in Tagen.
+func material_coverage_days(material_type: StringName = &"") -> float:
+	var need := daily_material_need(material_type)
+	if need <= 0.0:
+		return INF
+	return material_stock(material_type) / need
+
+
+## Der Preis einer Materialart (€/kg).
+##
+## Der Preis ergibt sich aus den Anlagen, die diese Art verbrauchen.
+## Für Anlagen ohne Typ gilt der bisherige Durchschnitt.
+func material_price(material_type: StringName = &"") -> float:
+	if material_type != &"":
+		var weighted := 0.0
+		var weight := 0.0
+		var running: Array[MachineInstance] = active_machines()
+		for m in running:
+			if m.spec.material_type != material_type:
+				continue
+			var per_unit := m.spec.material_per_unit
+			if per_unit <= 0.0:
+				continue
+			weighted += m.spec.material_price_per_kg * per_unit
+			weight += per_unit
+		if weight > 0.0:
+			return weighted / weight
+		return 0.0
+	return _average_material_price()
+
+
+## Das auf dem Weg befindliche Material einer Art (kg).
+func material_in_transit(material_type: StringName = &"") -> float:
+	var total := 0.0
+	for delivery in material_deliveries:
+		var mt := StringName(delivery.get("material_type", ""))
+		if material_type != &"" and mt != material_type:
+			continue
+		total += float(delivery.get("quantity", 0.0))
+	return total
+
+
+## Bewertet den gesamten Lagerbestand neu.
+func _revalue_inventory() -> void:
+	var total := 0.0
+	for material_type in material_inventory:
+		total += float(material_inventory[material_type]) * material_price(StringName(material_type))
+	total += inventory_material * _average_material_price()
+	economy.inventory_value = total
 
 
 ## Schreibt die laufenden Materiallieferungen weiter.
@@ -268,42 +389,18 @@ func _progress_material_deliveries() -> void:
 			continue
 		# Die Ware ist angekommen.
 		var quantity := float(delivery.get("quantity", 0.0))
-		inventory_material += quantity
-		economy.inventory_value = inventory_material * float(delivery.get("price", 0.0))
+		var material_type := StringName(delivery.get("material_type", ""))
+		set_material_stock(
+			material_type, material_stock(material_type) + quantity
+		)
 		EventBus.notify(
 			"Material angekommen",
-			"%s kg Material sind im Lager eingetroffen." % _format(quantity),
+			"%s kg %s sind im Lager eingetroffen." % [
+				_format(quantity), MachineCatalog.material_label(material_type)
+			],
 			"success"
 		)
 	material_deliveries = still_open
-
-
-## Wie viele Tage reicht der Bestand noch bei aktueller Produktion?
-##
-## Das ist die zentrale Planungsgröße: unterhalb des Materialvorlaufs
-## muss bestellt werden, sonst stoppt die Produktion.
-func material_coverage_days() -> float:
-	var daily_need := daily_material_need()
-	if daily_need <= 0.0:
-		return INF
-	return inventory_material / daily_need
-
-
-## Der tägliche Materialbedarf aller betriebsbereiten Anlagen (in kg).
-func daily_material_need() -> float:
-	var daily_need := 0.0
-	var running: Array[MachineInstance] = active_machines()
-	for m in running:
-		daily_need += m.spec.material_per_unit * m.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
-	return daily_need
-
-
-## Das bereits bestellte, aber noch nicht gelieferte Material (kg).
-func material_in_transit() -> float:
-	var total := 0.0
-	for delivery in material_deliveries:
-		total += float(delivery.get("quantity", 0.0))
-	return total
 
 
 # ==================================================================
@@ -481,11 +578,6 @@ func _average_material_price() -> float:
 	return weighted / weight
 
 
-## Der aktuelle Materialpreis je Kilogramm.
-func material_price() -> float:
-	return _average_material_price()
-
-
 ## Produktion: Auslastung, Materialverbrauch, Kosten.
 func _progress_production() -> void:
 	if not production_enabled:
@@ -498,15 +590,24 @@ func _progress_production() -> void:
 		# Tagesproduktion = Kapazität/360, gedeckelt durch Material
 		var daily_capacity := instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
 		var daily_material_needed := daily_capacity * instance.spec.material_per_unit
+		var material_type := instance.spec.material_type
 		var material_available := true
 		if daily_material_needed > 0.0:
-			material_available = inventory_material >= daily_material_needed
+			# Jede Anlage verbraucht ihre eigene Materialart. Ein
+			# Bestand ersetzt keinen anderen: Wer Stahl hat, kann keine
+			# Verpackung produzieren.
+			var stock := material_stock(material_type)
+			material_available = stock >= daily_material_needed
 			if material_available:
-				inventory_material -= daily_material_needed
+				set_material_stock(material_type, stock - daily_material_needed)
 
 		if not material_available:
 			# Materialengpass -> Maschine läuft im Leerlauf
-			instance.notes.append("Tag %d: Materialengpass – Anlage im Leerlauf." % day)
+			instance.notes.append(
+				"Tag %d: Materialengpass (%s) – Anlage im Leerlauf." % [
+					day, MachineCatalog.material_label(material_type)
+				]
+			)
 			continue
 
 		instance.quantity_this_year += daily_capacity
@@ -782,7 +883,8 @@ func _close_business_year() -> void:
 	economy.material_costs_year = material_cost
 	economy.costs_current_year += material_cost
 	economy.costs_total += material_cost
-	economy.inventory_value = inventory_material * _average_material_price()
+	# Den Lagerbestand je Materialart bewerten.
+	_revalue_inventory()
 
 	# Fixkosten als laufenden Aufwand verbuchen.
 	#
@@ -1165,6 +1267,7 @@ func to_dict() -> Dictionary:
 		"deliveries": deliveries,
 		"material_deliveries": material_deliveries,
 		"inventory_material": inventory_material,
+		"material_inventory": material_inventory,
 		"stats": stats,
 	}
 
@@ -1192,6 +1295,12 @@ func from_dict(data: Dictionary) -> void:
 	deliveries = data.get("deliveries", [])
 	material_deliveries = data.get("material_deliveries", [])
 	inventory_material = float(data.get("inventory_material", 0.0))
+	# Die Materialbestände je Art. Die Schluessel sind Strings, weil
+	# JSON keine Schluessel als StringName kennt.
+	material_inventory = {}
+	var stored: Dictionary = data.get("material_inventory", {})
+	for material_key in stored:
+		material_inventory[StringName(material_key)] = float(stored[material_key])
 	stats = data.get("stats", stats)
 
 

@@ -141,6 +141,7 @@ Jedes BWL-Fachthema wird zum betriebswirtschaftlichen Problem:
 - Lokalisierung
 - Installer/Updater
 - Visuelle Abnahme auf echtem Windows-Rechner
+  → Prüfliste in `docs/WINDOWS-ACCEPTANCE.md`
 
 ## 3. Risiken
 

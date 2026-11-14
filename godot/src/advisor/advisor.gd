@@ -445,26 +445,46 @@ func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 ## danach.
 func _analyze_material_supply(sim: Node) -> Array:
 	var out: Array = []
-	var daily_need: float = sim.daily_material_need()
-	if daily_need <= 0.0:
+	var material_types := sim.required_material_types()
+	if material_types.is_empty():
 		return out
 
-	var coverage: float = sim.material_coverage_days()
 	var lead_time: int = Simulation.MATERIAL_LEAD_TIME_DAYS
+	# Jede Materialart wird einzeln geprueft. Ein Bestand ersetzt
+	# keinen anderen - wer Stahl hat, kann keine Verpackung
+	# produzieren.
+	for material_type in material_types:
+		var daily_need: float = sim.daily_material_need(material_type)
+		if daily_need <= 0.0:
+			continue
+		var label := MachineCatalog.material_label(material_type)
+		var coverage: float = sim.material_coverage_days(material_type)
+		out.append_array(
+			_analyze_material_type(sim, material_type, label, daily_need, coverage, lead_time)
+		)
+	return out
+
+
+## Die Materialversorgung einer einzelnen Materialart pruefen.
+func _analyze_material_type(
+	sim: Node, material_type: StringName, label: String,
+	daily_need: float, coverage: float, lead_time: int
+) -> Array:
+	var out: Array = []
 
 	# Der Bestand reicht nicht bis zur naechsten Lieferung.
 	if coverage < lead_time:
-		var in_transit: float = sim.material_in_transit()
+		var in_transit: float = sim.material_in_transit(material_type)
 		var body := (
-			"Der Materialbestand reicht noch %d Tage. Die Lieferzeit betraegt "
+			"Der %s-Bestand reicht noch %d Tage. Die Lieferzeit betraegt "
 			+ "%d Tage. Ohne Nachbestellung stoppt die Produktion in %d Tagen."
-		) % [int(coverage), lead_time, int(coverage)]
+		) % [label, int(coverage), lead_time, int(coverage)]
 		if in_transit > 0.0:
 			body += " Auf dem Weg sind noch %s kg." % _format_kg(in_transit)
 		out.append({
-			"id": "material_short_%d" % int(sim.day),
+			"id": "material_short_%s_%d" % [label, int(sim.day)],
 			"severity": "warning",
-			"title": "Materialbestand reicht nicht bis zur Lieferung",
+			"title": "%s-Bestand reicht nicht bis zur Lieferung" % label,
 			"analysis": body,
 			"questions": [
 				"Wie viele Tage Produktion sichert der Bestand noch?",
@@ -482,13 +502,14 @@ func _analyze_material_supply(sim: Node) -> Array:
 	# Der Bestand ist knapp, reicht aber noch.
 	if coverage < lead_time * 2.0:
 		out.append({
-			"id": "material_tight_%d" % int(sim.day),
+			"id": "material_tight_%s_%d" % [label, int(sim.day)],
 			"severity": "info",
-			"title": "Materialbestand wird knapp",
+			"title": "%s-Bestand wird knapp" % label,
 			"analysis": (
-				"Der Bestand reicht noch %d Tage bei einem Tagesbedarf von "
-				+ "%s kg. Eine Bestellung sollte bald aufgegeben werden."
-			) % [int(coverage), _format_kg(daily_need)],
+				"Der %s-Bestand reicht noch %d Tage bei einem Tagesbedarf "
+				% [label, int(coverage)]
+				+ "von %s kg. Eine Bestellung sollte bald aufgegeben werden."
+			) % _format_kg(daily_need),
 			"questions": [
 				"Wie lange reicht der Bestand bei voller Auslastung?",
 				"Welche Bestellmenge deckt die nächsten 30 Tage?",

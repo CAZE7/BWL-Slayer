@@ -32,6 +32,8 @@ static func run(t: TestFramework) -> void:
 	_test_cash_logic(t)
 	t.suite("Ablauf · Materiallieferung mit Vorlauf")
 	_test_material_logistics(t)
+	t.suite("Ablauf · Getrennte Materialarten")
+	_test_material_types(t)
 
 
 # ------------------------------------------------------------------
@@ -806,5 +808,146 @@ static func _test_material_logistics(t: TestFramework) -> void:
 		"Materiallieferung im Spielstand",
 		restored.material_in_transit(),
 		800.0,
+		0.01
+	)
+
+
+# ------------------------------------------------------------------
+# Produktionskette: verschiedene Materialarten, getrennt gelagert.
+#
+# Wer Stahl hat, kann keine Verpackung produzieren. Ein Bestand
+# ersetzt keinen anderen. Das ist der Grund, warum getrennte
+# Materialbestände noetig sind.
+# ------------------------------------------------------------------
+static func _test_material_types(t: TestFramework) -> void:
+	var steel := _make_spec(&"STAHL", 1000.0, 0.0, 0.0, 0.0, 1000.0)
+	steel.material_type = MachineCatalog.MATERIAL_STEEL
+	steel.material_per_unit = 2.0
+	steel.material_price_per_kg = 1.40
+
+	var packing := _make_spec(&"PACK", 1000.0, 0.0, 0.0, 0.0, 1000.0)
+	packing.material_type = MachineCatalog.MATERIAL_PACKAGING
+	packing.material_per_unit = 0.6
+	packing.material_price_per_kg = 1.10
+
+	var sim := SimulationEngine.new()
+	sim.specs[steel.id] = steel
+	sim.specs[packing.id] = packing
+
+	var m1 := MachineInstance.new(steel, "stahl-1")
+	m1.state = MachineInstance.State.ACTIVE
+	m1.commissioned_year = 1
+	sim.machines["stahl-1"] = m1
+
+	var m2 := MachineInstance.new(packing, "pack-1")
+	m2.state = MachineInstance.State.ACTIVE
+	m2.commissioned_year = 1
+	sim.machines["pack-1"] = m2
+
+	# Beide Materialarten werden gebraucht.
+	var types := sim.required_material_types()
+	t.check_true("Zwei Materialarten erkannt", types.size() == 2)
+	t.check_true("Stahl wird gebraucht", types.has(MachineCatalog.MATERIAL_STEEL))
+	t.check_true("Verpackung wird gebraucht", types.has(MachineCatalog.MATERIAL_PACKAGING))
+
+	# Die Preise sind je Art verschieden.
+	t.check_approx(
+		"Stahlpreis korrekt", sim.material_price(MachineCatalog.MATERIAL_STEEL), 1.40, 0.01
+	)
+	t.check_approx(
+		"Verpackungspreis korrekt",
+		sim.material_price(MachineCatalog.MATERIAL_PACKAGING),
+		1.10,
+		0.01
+	)
+
+	# Der Tagesbedarf ist je Art getrennt.
+	t.check_approx(
+		"Stahlbedarf korrekt",
+		sim.daily_material_need(MachineCatalog.MATERIAL_STEEL),
+		2.0 * 1000.0 / 360.0,
+		0.01
+	)
+	t.check_approx(
+		"Verpackungsbedarf korrekt",
+		sim.daily_material_need(MachineCatalog.MATERIAL_PACKAGING),
+		0.6 * 1000.0 / 360.0,
+		0.01
+	)
+
+	# Nur Stahl kaufen: die Verpackung bleibt leer.
+	var cash_before := sim.economy.cash
+	var buy := sim.buy_material(1_000.0, MachineCatalog.MATERIAL_STEEL)
+	t.check_true("Stahlkauf moeglich", bool(buy.get("ok", false)))
+	t.check_approx(
+		"Stahl im Lager",
+		sim.material_stock(MachineCatalog.MATERIAL_STEEL),
+		1_000.0,
+		0.01
+	)
+	t.check_approx(
+		"Verpackung unberuehrt",
+		sim.material_stock(MachineCatalog.MATERIAL_PACKAGING),
+		0.0,
+		0.01
+	)
+	t.check_approx(
+		"Kasse nur einmal belastet",
+		sim.economy.cash,
+		cash_before - 1_400.0,
+		0.01
+	)
+
+	# Jetzt produzieren: die Stahlmaschine laeuft, die Verpackung
+	# steht still, weil ihr Material fehlt.
+	var produced_before := m2.quantity_this_year
+	for _i in range(10):
+		sim.advance_day()
+	t.check_true(
+		"Stahlanlage produziert",
+		m1.quantity_this_year > 0.0
+	)
+	t.check_approx(
+		"Verpackungsanlage steht still",
+		m2.quantity_this_year,
+		produced_before,
+		0.01
+	)
+
+	# Verpackung nachkaufen: dann laeuft auch sie.
+	sim.buy_material(1_000.0, MachineCatalog.MATERIAL_PACKAGING)
+	var pack_before := m2.quantity_this_year
+	for _i in range(10):
+		sim.advance_day()
+	t.check_true(
+		"Verpackungsanlage produziert jetzt",
+		m2.quantity_this_year > pack_before
+	)
+
+	# Die Bestände sind getrennt geblieben.
+	t.check_true(
+		"Stahlbestand vorhanden",
+		sim.material_stock(MachineCatalog.MATERIAL_STEEL) > 0.0
+	)
+	t.check_true(
+		"Verpackungsbestand vorhanden",
+		sim.material_stock(MachineCatalog.MATERIAL_PACKAGING) > 0.0
+	)
+
+	# Der Spielstand muss beide Bestände behalten.
+	var restored := SimulationEngine.new()
+	restored.specs[steel.id] = steel
+	restored.specs[packing.id] = packing
+	restored.from_dict(sim.to_dict())
+	t.check_approx(
+		"Stahlbestand im Spielstand",
+		restored.material_stock(MachineCatalog.MATERIAL_STEEL),
+		sim.material_stock(MachineCatalog.MATERIAL_STEEL),
+		0.01
+	)
+	t.check_approx(
+		"Verpackungsbestand im Spielstand",
+		restored.material_stock(MachineCatalog.MATERIAL_PACKAGING),
+		sim.material_stock(MachineCatalog.MATERIAL_PACKAGING),
 		0.01
 	)
