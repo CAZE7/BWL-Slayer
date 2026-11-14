@@ -284,7 +284,9 @@ static func build_office(width: float, depth: float, height: float) -> Array:
 ##
 ## Aufbau: Grundrahmen, Maschinenblock, Oberaggregat mit Tank und
 ## Rohren, Bedienpult, Schutzzaun, Statusleuchte und Auslastungsanzeige.
-static func build_machine(spec: MachineSpec, state: int, utilization: float) -> Array:
+static func build_machine(
+	spec: MachineSpec, state: int, utilization: float, material_short: bool = false
+) -> Array:
 	var parts: Array = []
 	var w := 3.2
 	var d := 2.4
@@ -333,6 +335,12 @@ static func build_machine(spec: MachineSpec, state: int, utilization: float) -> 
 		status_color = COLORS["warning"]
 	elif state == MachineInstance.State.DECOMMISSIONED:
 		status_color = COLORS["concrete_dark"]
+
+	# Materialengpass: Die Anlage steht, ist aber betriebsbereit
+	# installiert. Die Leuchte zeigt rot, damit der Grund auf dem
+	# Gelände sofort sichtbar ist - nicht erst in der Seitenleiste.
+	if material_short and state == MachineInstance.State.ACTIVE:
+		status_color = COLORS["warning"]
 
 	# Signalmast
 	parts.append(_cylinder(0.05, 0.8, Vector3(w / 2.0 - 0.2, 2.2, -d / 2.0 + 0.2), COLORS["steel"], 0.45))

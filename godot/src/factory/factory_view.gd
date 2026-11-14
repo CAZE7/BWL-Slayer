@@ -233,8 +233,14 @@ func sync_machines() -> void:
 		var node: Node3D = _machine_nodes[instance_id]
 		var last_state := int(node.get_meta("state", -1))
 		var last_fill := float(node.get_meta("fill", -1.0))
+		var last_short := bool(node.get_meta("material_short", false))
 		var fill := instance.spec.utilization_at(instance.quantity_this_year)
-		if last_state != instance.state or absf(last_fill - fill) > 0.005:
+		var short := _has_material_shortage(instance)
+		if (
+			last_state != instance.state
+			or absf(last_fill - fill) > 0.005
+			or last_short != short
+		):
 			update_machine_visual(instance_id)
 	# Entfernte Maschinen entfernen
 	for node_id in _machine_nodes.keys():
@@ -251,17 +257,27 @@ func _create_machine_node(instance: MachineInstance) -> void:
 
 	# Maschinenvisual
 	var fill := instance.spec.utilization_at(instance.quantity_this_year)
-	for part in FactoryBuilder.build_machine(instance.spec, instance.state, fill):
+	# Fehlt das Material, steht die Anlage im Leerlauf. Das muss auf
+	# dem Gelände sichtbar sein, nicht nur in der Seitenleiste.
+	var material_short := _has_material_shortage(instance)
+	for part in FactoryBuilder.build_machine(
+		instance.spec, instance.state, fill, material_short
+	):
 		root.add_child(part)
 
 	# Merkwerte fuer die Aktualisierung: die Szene wird nur neu
 	# aufgebaut, wenn sich der Zustand oder die Auslastung aendert.
 	root.set_meta("state", instance.state)
 	root.set_meta("fill", fill)
+	root.set_meta("material_short", material_short)
 
 	# Statusanzeige / Auslastung
 	var label := Label3D.new()
 	label.text = instance.spec.display_name
+	# Die Materialart steht dabei, weil eine Anlage im Leerlauf
+	# sichtbar machen muss, WELCHES Material fehlt.
+	if instance.spec.material_type != &"":
+		label.text += "  ·  " + MachineCatalog.material_label(instance.spec.material_type)
 	label.font_size = 48
 	label.pixel_size = 0.006
 	label.position = Vector3(0, 3.4, 0)
@@ -280,6 +296,23 @@ func _create_machine_node(instance: MachineInstance) -> void:
 ## eine inkrementelle Aktualisierung einzelner Teile und wird nur
 ## aufgerufen, wenn sich der Zustand oder die Auslastung tatsaechlich
 ## geaendert hat.
+## Fehlt dieser Anlage das Material, das sie braucht?
+##
+## Der Tagesbedarf wird gegen den Bestand der passenden Materialart
+## geprueft. Ein Bestand einer anderen Art zaehlt nicht.
+func _has_material_shortage(instance: MachineInstance) -> bool:
+	if not instance.is_operational():
+		return false
+	if instance.spec.material_per_unit <= 0.0:
+		return false
+	var daily_need := (
+		instance.spec.capacity_units_per_year / float(Simulation.DAYS_PER_YEAR)
+		* instance.spec.material_per_unit
+	)
+	var stock: float = Simulation.material_stock(instance.spec.material_type)
+	return stock < daily_need
+
+
 func update_machine_visual(instance_id: String) -> void:
 	var node: Node3D = _machine_nodes.get(instance_id)
 	if node == null:
