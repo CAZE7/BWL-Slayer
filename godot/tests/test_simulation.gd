@@ -249,14 +249,36 @@ static func _test_investment_evaluation(t: TestFramework) -> void:
 	t.check_true("Zwei Anlagen ausgewertet", rows.size() == 2)
 
 	var row: Dictionary = rows[0]
+
+	# Der Cashflow der Investitionsrechnung folgt der Legacy-Definition:
+	# Gewinn + AfA + kalk. Zinsen. Im letzten Jahr kommt der Restwert
+	# dazu. Die Reihe enthaelt NUR die Zahlungen ab t = 1 – die
+	# Investition zieht BWLEngine.npv() ueber a0 selbst ab.
+	var expected_flows: Array = []
+	for year_index in spec.useful_life_years:
+		var flow := spec.annual_cashflow_at(quantity)
+		if year_index == spec.useful_life_years - 1:
+			flow += spec.residual_value
+		expected_flows.append(flow)
+
 	t.check_approx(
 		"Barwert stimmt mit der Engine ueberein",
 		float(row.get("npv", 0.0)),
-		BWLEngine.npv(
-			spec.acquisition_cost,
-			[5_000.0, 5_000.0, 5_000.0, 5_000.0, 5_000.0],
-			spec.effective_interest_rate()
-		),
+		BWLEngine.npv(spec.acquisition_cost, expected_flows, spec.effective_interest_rate()),
+		1.0
+	)
+
+	# Der Barwert muss auch gegen eine unabhaengige Rechnung stimmen:
+	# Investition bei t = 0, dann die Discounted Cashflows.
+	var manual_npv := -spec.acquisition_cost
+	for year_index in expected_flows.size():
+		manual_npv += float(expected_flows[year_index]) / pow(
+			1.0 + spec.effective_interest_rate(), float(year_index + 1)
+		)
+	t.check_approx(
+		"Barwert stimmt mit der Handrechnung ueberein",
+		float(row.get("npv", 0.0)),
+		manual_npv,
 		1.0
 	)
 
@@ -281,8 +303,8 @@ static func _test_investment_evaluation(t: TestFramework) -> void:
 			float(row.get("profitability_index", 0.0)) > 1.0
 		)
 
-	# Die interne Rendite liegt zwischen 0 % und dem Effektivzins,
-	# wenn der Barwert positiv ist.
+	# Die interne Rendite liegt UEBER dem Diskontsatz, wenn der
+	# Barwert positiv ist – das ist die Aussage des Barwertkriteriums.
 	var irr := float(row.get("irr", -1.0))
 	if npv_value > 0.0:
 		t.check_true(
@@ -290,7 +312,12 @@ static func _test_investment_evaluation(t: TestFramework) -> void:
 			irr > 0.0
 		)
 		t.check_true(
-			"Interne Rendite unter dem Effektivzins",
+			"Interne Rendite ueber dem Diskontsatz",
+			irr > spec.effective_interest_rate()
+		)
+	else:
+		t.check_true(
+			"Interne Rendite unter dem Diskontsatz",
 			irr < spec.effective_interest_rate()
 		)
 

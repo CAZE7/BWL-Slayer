@@ -233,6 +233,87 @@ for (const file of files) {
 }
 
 /* ------------------------------------------------------------------
+ * 2c. Variant-Inferenz aus Autoload-Aufrufen
+ *
+ * Ein Autoload (Simulation, Advisor, ...) ist vom Typ `Node`. Ruft man
+ * darüber eine Methode auf, die eine typisierte Collection zurueckgibt
+ * (z. B. `active_machines() -> Array[MachineInstance]`), ist das
+ * Ergebnis fuer den Compiler ein Variant. Godot 4.7 behandelt die
+ * Typinferenz aus einem Variant als FEhler ("Cannot infer the type
+ * of ... because the value doesn't have a set type").
+ *
+ * Deshalb muss der Ergebnis-Typ immer ausdruecklich stehen:
+ *
+ *   var machines: Array[MachineInstance] = Simulation.active_machines()
+ *
+ * Diese Regel findet Stellen, an denen das Ergebnis eines
+ * Autoload-Aufrufs untypisiert in einer `:=`-Zuweisung landet.
+ * ------------------------------------------------------------------ */
+{
+  // Methoden, die eine typisierte Collection zurueckgeben.
+  const TYPED_COLLECTION_METHODS = new Set([
+    'active_machines',
+    'all_machines',
+    'completed_orders',
+    'deliveries',
+    'machines',
+    'specs',
+  ]);
+
+  // Methoden mit skaliertem Rückgabewert (float/bool/String). Auch sie
+  // liefern ueber einen Autoload ein Variant.
+  const SCALAR_METHODS = new Set([
+    'credit_limit',
+    'debt_ratio',
+    'equity_ratio',
+    'financing_costs_year',
+    'interest_burden',
+    'material_price',
+    'current_utilization',
+  ]);
+
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    const code = stripCode(source);
+    const lines = source.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#')) continue;
+
+      // Muster: var x := <Autoload>.<methode>()
+      const assign = trimmed.match(
+        /^var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/
+      );
+      if (!assign) continue;
+
+      const [, varName, autoload, method] = assign;
+      if (!AUTOLOADS.has(autoload)) continue;
+      const isCollection = TYPED_COLLECTION_METHODS.has(method);
+      const isScalar = SCALAR_METHODS.has(method);
+      if (!isCollection && !isScalar) continue;
+
+      // Ausnahme: die Schleifenvariable einer for-Schleife ist kein
+      // Inference-Problem, solange der Typ nicht abgeleitet wird.
+      // `for x in Simulation.machines()` faellt ohnehin nicht unter
+      // dieses Muster.
+
+      const typeHint = isCollection
+        ? ': Array[MachineInstance] = ...'
+        : ': float = ...';
+      warn(
+        file,
+        i + 1,
+        `"${varName}" erbt den Typ Variant aus "${autoload}.${method}()" – ` +
+          `bitte explizit typisieren (z. B. "${typeHint}"), ` +
+          `sonst bricht der Projektstart in Godot 4.7 mit "Cannot infer the type"`
+      );
+    }
+  }
+}
+
+/* ------------------------------------------------------------------
  * 2b. Aufrufprüfung gegen eigene Klassen
  *
  * Ruft eine Variable eines eigenen Typs eine Methode auf, die es dort

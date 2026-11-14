@@ -742,7 +742,7 @@ func _fill_production(box: VBoxContainer) -> void:
 		if selected != null:
 			box.add_child(_machine_card(selected, true))
 
-	var machines := Simulation.active_machines()
+	var machines: Array[MachineInstance] = Simulation.active_machines()
 	if machines.is_empty():
 		if _selected_machine == "":
 			box.add_child(_muted("Keine Anlage im Betrieb. Starte eine Investition."))
@@ -998,7 +998,8 @@ func _fill_storage(box: VBoxContainer) -> void:
 
 	# Materialbedarf der Anlagen
 	var daily_need := 0.0
-	for m in Simulation.active_machines():
+	var running: Array[MachineInstance] = Simulation.active_machines()
+	for m in running:
 		daily_need += m.spec.material_per_unit * m.spec.capacity_units_per_year / 360.0
 	if daily_need > 0.0:
 		var cover_days := 0.0
@@ -1111,7 +1112,7 @@ func _fill_finance(box: VBoxContainer) -> void:
 	# --- Finanzierung: eine echte Entscheidung --------------------
 	_add_section(box, "FINANZIERUNG")
 
-	var limit := Simulation.credit_limit()
+	var limit: float = Simulation.credit_limit()
 	_add_metric(box, "Kreditrahmen der Bank", BWLEngine.format_eur(limit, 0))
 	_add_metric(box, "Zinssatz (Bonität)", BWLEngine.format_pct(eco.debt_rate * 100.0, 2))
 

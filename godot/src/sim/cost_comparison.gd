@@ -91,21 +91,27 @@ static func compare(
 		result.cheaper_above = "–"
 	else:
 		# Wer ist unterhalb der kritischen Menge günstiger?
-		# Bei kleinen Mengen dominiert der Fixkostenblock: Die Anlage
-		# mit den HÖHEREN Fixkosten schneidet besser ab, weil ihre
-		# Fixkosten erst bei höheren Mengen ins Gewicht fallen.
+		#
+		# Die Regeln unterscheiden sich je nach Betrachtung:
+		#
+		# KOSTEN: K(x) = kvar·x + F
+		#   Bei kleinen Mengen dominiert der Fixkostenblock F. Die
+		#   Anlage mit dem NIEDRIGEREN F ist dann billiger. Bei großen
+		#   Mengen dominiert der Stückpreis: Die Anlage mit dem
+		#   NIEDRIGEREN kvar gewinnt.
+		#
+		# GEWINN: G(x) = db·x − F
+		#   Bei kleinen Mengen dominiert der Fixkostenblock F. Die
+		#   Anlage mit dem HÖHEREN F hat den kleineren Abzug und
+		#   gewinnt. Bei großen Mengen dominiert der Deckungsbeitrag:
+		#   Die Anlage mit dem HÖHEREN db gewinnt.
 		var below_is_a: bool
 		var above_is_a: bool
 		if mode == "PROFIT":
-			# Gewinn: db·x − F. Unterhalb x* gewinnt die Anlage mit den
-			# höheren Fixkosten, oberhalb die mit dem höheren DB.
 			below_is_a = result.fixed_costs_a > result.fixed_costs_b
 			above_is_a = result.contribution_a > result.contribution_b
 		else:
-			# Kosten: kvar·x + F. Unterhalb x* gewinnt die Anlage mit den
-			# höheren Fixkosten, oberhalb die mit den niedrigeren
-			# variablen Stückkosten.
-			below_is_a = result.fixed_costs_a > result.fixed_costs_b
+			below_is_a = result.fixed_costs_a < result.fixed_costs_b
 			above_is_a = a.variable_cost_per_unit < b.variable_cost_per_unit
 
 		result.cheaper_below = a.display_name if below_is_a else b.display_name

@@ -227,9 +227,14 @@ static func _test_orders(t: TestFramework) -> void:
 # Investitionsentscheidung
 # ------------------------------------------------------------------
 static func _test_investment(t: TestFramework) -> void:
-	# Anlage A: hohe Fixkosten, niedrige variable Stueckkosten.
-	# Anlage B: niedrige Fixkosten, hohe variable Stueckkosten.
-	# Bei kleiner Menge gewinnt B (Fixkostenblock), bei grosser Menge A.
+	# Anlage A: niedrige Fixkosten, hohe variable Stueckkosten.
+	# Anlage B: hohe Fixkosten, niedrige variable Stueckkosten.
+	#
+	# Bei der Kostenbetrachtung K(x) = kvar*x + F gilt:
+	#   unterhalb x*  -> der Fixkostenblock dominiert, die Anlage mit
+	#                    dem NIEDRIGEREN F ist billiger (hier A)
+	#   oberhalb x*   -> der Stueckpreis dominiert, die Anlage mit dem
+	#                    NIEDRIGEREN kvar ist billiger (hier B)
 	var a := _make_spec(&"A", 16000.0, 1180.20, 26.0, 40.0, 50000.0)
 	var b := _make_spec(&"B", 17000.0, 1345.70, 22.0, 40.0, 50000.0)
 
@@ -246,7 +251,7 @@ static func _test_investment(t: TestFramework) -> void:
 	var b_above := b.total_costs_at(x_above)
 
 	t.check_true(
-		"Unterhalb gewinnt die Anlage mit den hoeheren Fixkosten",
+		"Unterhalb gewinnt die Anlage mit den niedrigeren Fixkosten",
 		(b_below < a_below) if result.cheaper_below == b.display_name else (a_below < b_below)
 	)
 	t.check_true(

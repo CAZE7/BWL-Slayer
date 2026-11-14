@@ -493,7 +493,8 @@ func _analyze_orders(sim: Node) -> Array:
 		var revenue := float(order.get("revenue", 0.0))
 		var price := revenue / quantity if quantity > 0.0 else 0.0
 		var db := 0.0
-		for m in sim.active_machines():
+		var producing: Array[MachineInstance] = sim.active_machines()
+		for m in producing:
 			db = m.spec.contribution_margin_per_unit()
 			break
 		if db > 0.0 and price < db:
