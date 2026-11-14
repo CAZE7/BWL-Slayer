@@ -119,6 +119,70 @@ Er steckt bereits im Betriebsergebnis. Ein zweiter Abzug wäre eine
 doppelte Belastung. Die Legacy-Engine verwendet dieselbe Formel
 (`profitAtX + depreciation + imputedInterest`).
 
+### Kassenlogik: jede Zahlung genau einmal
+
+Der Jahresabschluss darf die Kasse **nicht** über den Cashflow
+verändern. Der Umsatz ist bei der Lieferung bereits gutgeschrieben,
+das Material beim Einkauf bezahlt, die Fixkosten monatlich abgezogen.
+Ein zweiter Abzug wäre eine Doppelbuchung.
+
+| Vorgang | Wann die Kasse sinkt | Wann der Aufwand entsteht |
+|---|---|---|
+| Umsatz | bei der Lieferung | bei der Lieferung |
+| Material | beim Einkauf | beim Verbrauch (Bestand sinkt) |
+| Fixkosten | monatlich (Zwölftel) | im Jahresabschluss |
+| Abschreibung | nie | im Jahresabschluss |
+| Kalk. Zinsen | nie | im Jahresabschluss |
+| Zinsaufwand FK | im Jahresabschluss | im Jahresabschluss |
+| Tilgung | bei der Tilgung | nie (kein Aufwand) |
+| Investition | bei der Bestellung | nie (Aktivierung) |
+
+Der Investitionsbetrag wird **nicht** auf das Betriebskonto gebucht,
+sondern ins Anlagevermögen aktiviert. Erst die Abschreibung mindert
+das Eigenkapital.
+
+Jede Kassenbewegung läuft über `EconomyState.move_cash()`. Das
+Signal `cash_changed` meldet die Bewegung an die UI und den Berater
+— so entsteht die Kette **Spielereignis → Simulation → sichtbares
+Feedback**.
+
+## Investitionsrechnung
+
+Zusätzlich zur Kostenfunktion werden die dynamischen Verfahren
+berechnet — sie entscheiden, ob eine Anlage ihr Kapital verdient:
+
+| Größe | Bedeutung | Formel |
+|---|---|---|
+| Barwert (NPV) | Wert der Investition heute | `−\|A₀\| + Σ CFₜ·(1+i)⁻ᵗ` |
+| Kapitalwert | zulässiger Jahresbeitrag | `NPV · Annuitätsfaktor` |
+| Rentabilitätsindex | Ertrag je investiertem Euro | `(NPV + \|A₀\|) / \|A₀\|` |
+| Interne Rendite | Zinssatz, bei dem NPV = 0 | numerisch (Bisektion) |
+
+Der Zinssatz `i` ist der **gewichtete Mittelwert** aus Eigen- und
+Fremdkapitalzins:
+
+```
+i = (1 − Fremdkapitalanteil) · EK-Zins + Fremdkapitalanteil · FK-Zins
+```
+
+Der Cashflow der Investitionsrechnung ist **zahlungswirksam**. Er
+folgt exakt der Legacy-Engine:
+
+```
+Cashflow = Gewinn + Abschreibung + kalkulatorische Zinsen
+```
+
+Die kalkulatorischen Zinsen stehen im Gewinn, sind aber nicht
+zahlungswirksam — die Addition rechnet sie heraus. Die Abschreibung
+ist ebenfalls nicht zahlungswirksam und wird hinzugefügt. Der Restwert
+fließt im letzten Jahr ein.
+
+Diese Formel ist Teil der **geschützten Parität** zum Legacy-Engine
+und darf nicht verändert werden.
+
+Für die Entscheidung zählt: **Kapitalwert über den jährlichen
+Fixkosten** — erst dann verdient die Anlage ihr Kapital.
+
 ## Investitionsentscheidung
 
 Der Kern des Spiels. Zwei Anlagen A und B werden über ihre **echten

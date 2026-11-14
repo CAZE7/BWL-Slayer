@@ -33,7 +33,7 @@ func _on_order_received(order: Dictionary) -> void:
 	var quantity := float(order.get("quantity", 0.0))
 	var revenue := float(order.get("revenue", 0.0))
 	var margin := 0.0
-	var machines := sim.active_machines()
+	var machines: Array[MachineInstance] = sim.active_machines()
 	for m in machines:
 		margin += m.spec.contribution_margin_per_unit() * minf(
 			quantity, m.spec.capacity_units_per_year
@@ -69,10 +69,10 @@ func _on_delivery_installed(order: Dictionary) -> void:
 	var sim := Simulation
 	if sim == null:
 		return
-	var spec := sim.specs.get(String(order.get("spec_id", "")))
+	var spec: MachineSpec = sim.specs.get(String(order.get("spec_id", "")))
 	if spec == null:
 		return
-	var machines := sim.active_machines()
+	var machines: Array[MachineInstance] = sim.active_machines()
 	var capacity := 0.0
 	for m in machines:
 		capacity += m.spec.capacity_units_per_year
@@ -174,6 +174,21 @@ func _emit_event_finding(
 	EventBus.advisor_message_added.emit(message)
 
 
+## Ganzzahl formatieren (mit Tausenderpunkt).
+func _format_int(value: float) -> String:
+	var negative := value < 0.0
+	var amount := absf(value)
+	var text := "%.0f" % amount
+	var grouped := ""
+	var count := 0
+	for i in range(text.length() - 1, -1, -1):
+		grouped = text[i] + grouped
+		count += 1
+		if count % 3 == 0 and i > 0:
+			grouped = "." + grouped
+	return ("-" if negative else "") + grouped
+
+
 ## Geldbetrag formatieren.
 func _format_eur(value: float) -> String:
 	var negative := value < 0.0
@@ -203,7 +218,7 @@ func analyze() -> Dictionary:
 		return {}
 
 	var economy: EconomyState = sim.economy
-	var machines := sim.active_machines()
+	var machines: Array[MachineInstance] = sim.active_machines()
 	var findings := _analyze_utilization(machines)
 	findings.append_array(_analyze_liquidity(economy))
 	findings.append_array(_analyze_capacity(machines))
@@ -213,6 +228,7 @@ func analyze() -> Dictionary:
 	findings.append_array(_analyze_deliveries(sim))
 	findings.append_array(_analyze_capital_binding(sim, machines))
 	findings.append_array(_analyze_lost_orders(sim))
+	findings.append_array(_analyze_financing(sim))
 
 	current_analysis = {
 		"day": sim.day,
@@ -368,6 +384,105 @@ func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 	return out
 
 
+## Finanzierung: Leverage, Zinsbelastung und Kreditrahmen.
+##
+## Der Berater zeigt die Konsequenz der Kapitalstruktur, nicht nur die
+## Zahlen. Er stellt die Fragen, die der Spieler beantworten muss:
+## Wieviel eigenes Kapital steckt im Unternehmen, und wie teuer wird
+## das Fremdkapital?
+func _analyze_financing(sim: Node) -> Array:
+	var out: Array = []
+	var economy: EconomyState = sim.economy
+	var equity := economy.equity
+	var debt := economy.debt
+	if equity <= 0.0:
+		return out
+
+	var debt_share := debt / maxf(equity + debt, 1.0)
+	var burden := economy.interest_paid_year / equity
+
+	# Zu hohe Verschuldung: der Zins frisst das Eigenkapital.
+	if debt_share > 0.5:
+		out.append({
+			"id": "financing_high_leverage",
+			"severity": "warning",
+			"title": "Fremdkapital über 50 %",
+			"analysis": (
+				"Das Fremdkapital beträgt %s € bei %s € Eigenkapital. "
+				+ "Die Zinsbelastung des Eigenkapitals liegt bei %s %% p.a. "
+				+ "Der Bank wird damit mehr geschuldet als dem eigenen Unternehmen gehört."
+			) % [
+				_format_eur(debt),
+				_format_eur(equity),
+				"%.1f" % (burden * 100.0),
+			],
+			"questions": [
+				"Welcher Teil des Kapitals gehört dem Eigentümer, welcher der Bank?",
+				"Was passiert mit dem Eigenkapital, wenn der Zins höher wird als die Rendite?",
+			],
+			"lesson": (
+				"Leverage verstärkt Gewinne – aber auch Verluste. Ab einer "
+				+ "Fremdkapitalquote über 50 % ist das Eigenkapital die "
+				+ "schwächere Seite der Bilanz."
+			),
+			"action": "Öffne den Finanzbereich und erhöhe den Tilgungsanteil.",
+		})
+
+	# Zinsbelastung: der Zins frisst die Rendite.
+	if burden > 0.15:
+		out.append({
+			"id": "financing_interest_burden",
+			"severity": "warning",
+			"title": "Zinsen belasten das Eigenkapital stark",
+			"analysis": (
+				"Die Zinskosten von %s € entsprechen %s %% des Eigenkapitals. "
+				+ "Davon müssen %s € übrig bleiben, damit die Geschäftstätigkeit "
+				+ "aus eigener Kraft trägt."
+			) % [
+				_format_eur(economy.interest_paid_year),
+				"%.1f" % (burden * 100.0),
+				_format_eur(maxf(0.0, economy.operating_result())),
+			],
+			"questions": [
+				"Reicht der operative Cashflow, um die Zinsen zu tragen?",
+				"Welche Anlage bringt mehr Rendite als der Kreditzins?",
+			],
+			"lesson": (
+				"Der Kreditzins ist die Hürde, die eine Investition "
+				+ "übernehmen muss. Bringt sie weniger als der Zins, "
+				+ "vernichtet sie Eigenkapital."
+			),
+			"action": "Prüfe im Investitionsmodul die interne Rendite deiner Anlagen.",
+		})
+
+	# Ungenutzter Kreditrahmen: Kapital bleibt ungenutzt.
+	var limit := sim.credit_limit()
+	if limit > 20_000.0 and debt_share < 0.3:
+		out.append({
+			"id": "financing_unused_capacity",
+			"severity": "info",
+			"title": "Kreditrahmen nicht ausgeschöpft",
+			"analysis": (
+				"Die Bank würde %s € gewähren. Das Eigenkapital ist "
+				+ "zu %s % % vom Fremdkapital finanziert – eine niedrige "
+				+ "Fremdkapitalquote ist ein Zeichen gesunder Finanzierung, "
+				+ "aber ungenutztes Kapital kostet Rendite."
+			) % [_format_eur(limit), "%.0f" % (debt_share * 100.0)],
+			"questions": [
+				"Gibt es eine Investition, die mehr bringt als der Kreditzins?",
+				"Was ist der Unterschied zwischen Eigen- und Fremdkapital für die Rendite?",
+			],
+			"lesson": (
+				"Eigenkapital kostet Opportunitätskosten, Fremdkapital "
+				+ "Zinsen. Der billige Zins schont das Eigenkapital nur "
+				+ "wenn die Investition mehr bringt als er."
+			),
+			"action": "Öffne das Investitionsmodul und prüfe den Kapitalwert.",
+		})
+
+	return out
+
+
 ## Aufträge: unwirtschaftliche oder unbedienbare Aufträge.
 func _analyze_orders(sim: Node) -> Array:
 	var out: Array = []
@@ -411,7 +526,7 @@ func _analyze_lost_orders(sim: Node) -> Array:
 	if cancelled <= 0:
 		return out
 
-	var machines := sim.active_machines()
+	var machines: Array[MachineInstance] = sim.active_machines()
 	var capacity := 0.0
 	for m in machines:
 		capacity += m.spec.capacity_units_per_year

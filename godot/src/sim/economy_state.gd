@@ -62,6 +62,20 @@ var dividend_current_year: float = 0.0
 ## Reputation (0..100)
 var reputation: float = 12.0
 
+## Finanzierungssteuerung
+##
+## Der Tilgungsanteil ist eine echte Unternehmensentscheidung: Wer
+## nicht tilgt, haelt Liquiditaet fuer die naechste Investition,
+## zahrt aber mehr Zinsen. Der Anteil gilt fuer das Fremdkapital
+## insgesamt.
+var repayment_share: float = 0.10
+## Ob der Kredit automatisch getilgt wird. Bei `false` entscheidet
+## der Spieler im Finanzbereich selbst ueber Tilgung und
+## Kreditaufnahme.
+var auto_repayment: bool = true
+## Der Zinssatz, zu dem neuer Kredit aufgenommen wird.
+var loan_rate_offer: float = 0.06
+
 
 ## Umsatz des Geschäftsjahres.
 func operating_result() -> float:
@@ -238,6 +252,9 @@ func to_dict() -> Dictionary:
 		"dividends_paid": dividends_paid,
 		"dividend_current_year": dividend_current_year,
 		"reputation": reputation,
+		"repayment_share": repayment_share,
+		"auto_repayment": auto_repayment,
+		"loan_rate_offer": loan_rate_offer,
 	}
 
 
@@ -264,3 +281,6 @@ func from_dict(data: Dictionary) -> void:
 	dividends_paid = float(data.get("dividends_paid", 0.0))
 	dividend_current_year = float(data.get("dividend_current_year", 0.0))
 	reputation = float(data.get("reputation", 12.0))
+	repayment_share = clampf(float(data.get("repayment_share", 0.10)), 0.0, 1.0)
+	auto_repayment = bool(data.get("auto_repayment", true))
+	loan_rate_offer = clampf(float(data.get("loan_rate_offer", 0.06)), 0.0, 1.0)

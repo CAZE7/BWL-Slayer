@@ -1102,18 +1102,86 @@ func _fill_finance(box: VBoxContainer) -> void:
 
 	_add_section(box, "KENNZAHLEN")
 	_add_metric(box, "FK-Quote", BWLEngine.format_pct(eco.debt_ratio() * 100.0, 1))
+	_add_metric(box, "EK-Quote", BWLEngine.format_pct(Simulation.equity_ratio() * 100.0, 1))
 	_add_metric(box, "EK-Rentabilität", BWLEngine.format_pct(eco.roe_percent(), 1))
 	_add_metric(box, "Liquiditätsgrad II", String.num(eco.liquidity_ratio(), 2))
 	_add_metric(box, "Tilgung im Jahr", BWLEngine.format_eur(eco.repayment_year, 0))
+	_add_metric(box, "Zinsbelastung EK", BWLEngine.format_pct(Simulation.interest_burden() * 100.0, 2))
 
-	var loan := Button.new()
-	loan.text = "Kredit aufnehmen (50.000 €)"
-	loan.custom_minimum_size = Vector2(0, 32)
-	loan.pressed.connect(func():
-		Simulation.take_loan(50000.0)
-		_refresh_sidebar()
+	# --- Finanzierung: eine echte Entscheidung --------------------
+	_add_section(box, "FINANZIERUNG")
+
+	var limit := Simulation.credit_limit()
+	_add_metric(box, "Kreditrahmen der Bank", BWLEngine.format_eur(limit, 0))
+	_add_metric(box, "Zinssatz (Bonität)", BWLEngine.format_pct(eco.debt_rate * 100.0, 2))
+
+	# Der Tilgungsanteil steuert, wie viel Fremdkapital pro Jahr
+	# zurueckgeht. 0 % haelt Liquiditaet, kostet aber Zinsen.
+	var repay_row := HBoxContainer.new()
+	repay_row.add_theme_constant_override("separation", 6)
+	var repay_label := Label.new()
+	repay_label.text = "Tilgung p.a."
+	repay_label.custom_minimum_size = Vector2(110, 0)
+	repay_label.add_theme_font_size_override("font_size", 12)
+	repay_row.add_child(repay_label)
+
+	var repay_slider := HSlider.new()
+	repay_slider.min_value = 0.0
+	repay_slider.max_value = 100.0
+	repay_slider.step = 5.0
+	repay_slider.value = eco.repayment_share * 100.0
+	repay_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	repay_slider.custom_minimum_size = Vector2(0, 24)
+	repay_slider.tooltip_text = "Anteil des Fremdkapitals, der pro Jahr getilgt wird."
+	repay_row.add_child(repay_slider)
+
+	var repay_value := Label.new()
+	repay_value.text = "%d %%" % int(eco.repayment_share * 100.0)
+	repay_value.custom_minimum_size = Vector2(48, 0)
+	repay_value.add_theme_font_size_override("font_size", 12)
+	repay_value.add_theme_color_override("font_color", UI["accent"])
+	repay_row.add_child(repay_value)
+
+	repay_slider.value_changed.connect(func(value: float):
+		repay_value.text = "%d %%" % int(value)
 	)
-	box.add_child(loan)
+	repay_slider.drag_ended.connect(func(changed: bool):
+		if changed:
+			Simulation.set_repayment_share(repay_slider.value / 100.0)
+			_refresh_sidebar()
+	)
+	box.add_child(repay_row)
+
+	# Die Kreditaufnahme richtet sich nach dem Kreditrahmen.
+	var loan_amount := minf(25_000.0, limit)
+	if loan_amount > 0.0:
+		var loan := Button.new()
+		loan.text = "Kredit aufnehmen: %s" % BWLEngine.format_eur(loan_amount, 0)
+		loan.custom_minimum_size = Vector2(0, 32)
+		loan.pressed.connect(func():
+			var result := Simulation.take_loan(loan_amount)
+			if not bool(result.get("ok", false)):
+				EventBus.notify(
+					"Kredit abgelehnt",
+					String(result.get("error", "Die Bank gewaehrt keinen Kredit.")),
+					"warning"
+				)
+			_refresh_sidebar()
+		)
+		box.add_child(loan)
+	else:
+		box.add_child(_muted("Kein Kreditrahmen. Die Bank gewaehrt kein weiteres Fremdkapital."))
+
+	# Die Tilgung kann auch manuell gesteuert werden.
+	if eco.debt > 0.0:
+		var repay_manual := Button.new()
+		repay_manual.text = "Fremdkapital tilgen: %s" % BWLEngine.format_eur(minf(10_000.0, eco.debt), 0)
+		repay_manual.custom_minimum_size = Vector2(0, 32)
+		repay_manual.pressed.connect(func():
+			Simulation.repay_loan(minf(10_000.0, eco.debt))
+			_refresh_sidebar()
+		)
+		box.add_child(repay_manual)
 
 
 func _fill_learning(box: VBoxContainer) -> void:

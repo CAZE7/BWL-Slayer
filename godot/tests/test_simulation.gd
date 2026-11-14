@@ -19,6 +19,8 @@ static func run(t: TestFramework) -> void:
 	_test_liquidity(t)
 	t.suite("Simulation · Investitionsrechnung")
 	_test_investment_evaluation(t)
+	t.suite("Simulation · Finanzierung")
+	_test_financing(t)
 
 
 # ------------------------------------------------------------------
@@ -213,17 +215,18 @@ static func _test_investment_evaluation(t: TestFramework) -> void:
 		0.0001
 	)
 
-	# Der zahlungswirksame Jahres-Cashflow darf die kalkulatorischen
-	# Zinsen NICHT enthalten.
+	# Der zahlungswirksame Jahres-Cashflow muss den Legacy-Werten
+	# entsprechen: Gewinn + Abschreibung + kalkulatorische Zinsen.
+	# Die kalkulatorischen Zinsen werden dabei herausgerechnet, die
+	# Abschreibung hinzugefuegt.
 	var quantity := 2_000.0
 	var cashflow := spec.annual_cashflow_at(quantity)
 	var expected_cashflow := (
 		spec.contribution_margin_per_unit() * quantity
 		- spec.fixed_operating_costs
-		+ spec.depreciation()
 	)
 	t.check_approx(
-		"Cashflow ohne kalkulatorische Zinsen",
+		"Cashflow entspricht der Legacy-Definition",
 		cashflow,
 		expected_cashflow,
 		0.01
@@ -316,4 +319,136 @@ static func _test_investment_evaluation(t: TestFramework) -> void:
 	t.check_true(
 		"Verlustanlage hat Index unter 1",
 		float(bad_rows[0].get("profitability_index", 0.0)) < 1.0
+	)
+
+
+# ------------------------------------------------------------------
+# Die Finanzierung muss echte Konsequenzen haben.
+#
+# Kreditaufnahme erhoeht die Liquiditaet, belastet aber die Bilanz.
+# Der Zinssatz richtet sich nach der Bonitaet. Die Tilgung ist eine
+# Entscheidung des Spielers – und liquiditaetsbegrenzt.
+# ------------------------------------------------------------------
+static func _test_financing(t: TestFramework) -> void:
+	var sim := SimulationEngine.new()
+
+	# Ausgangslage: 50.000 € Eigenkapital, kein Fremdkapital.
+	t.check_approx("EK-Quote startet bei 100 %", sim.equity_ratio(), 1.0, 0.0001)
+	t.check_approx("FK-Quote startet bei 0 %", sim.debt_ratio(), 0.0, 0.0001)
+
+	# Der Kreditrahmen richtet sich nach dem Eigenkapital.
+	var limit := sim.credit_limit()
+	t.check_true("Kreditrahmen vorhanden", limit > 0.0)
+	t.check_approx(
+		"Kreditrahmen entspricht dem Eigenkapital",
+		limit,
+		50_000.0,
+		1.0
+	)
+
+	# Kreditaufnahme: Kasse steigt, Fremdkapital steigt.
+	var cash_before := sim.economy.cash
+	var loan := sim.take_loan(20_000.0)
+	t.check_true("Kredit aufgenommen", bool(loan.get("ok", false)))
+	t.check_approx(
+		"Kasse steigt um den Kreditbetrag",
+		sim.economy.cash,
+		cash_before + 20_000.0,
+		0.01
+	)
+	t.check_approx(
+		"Fremdkapital steigt",
+		sim.economy.debt,
+		20_000.0,
+		0.01
+	)
+
+	# Die Bilanz muss weiterhin aufgehen: Kapital kommt von der Bank.
+	t.check_approx("Bilanz stimmt nach Kredit", sim.economy.balance_check(), 0.0, 1.0)
+
+	# Die FK-Quote ist jetzt 20.000 / 70.000 = 28,57 %.
+	t.check_approx(
+		"FK-Quote korrekt",
+		sim.debt_ratio(),
+		20_000.0 / 70_000.0,
+		0.0001
+	)
+
+	# Der Zinssatz richtet sich nach der Bonitaet: bei 28,57 % FK
+	# sind es 4 % + 0,2857 * 5 % = 5,43 %.
+	t.check_approx(
+		"Zinssatz richtet sich nach der Bonitaet",
+		float(loan.get("rate", 0.0)),
+		0.04 + (20_000.0 / 70_000.0) * 0.05,
+		0.0001
+	)
+
+	# Ueberziehung des Kreditrahmens wird abgelehnt.
+	var too_much := sim.take_loan(500_000.0)
+	t.check_true("Ueberziehung wird abgelehnt", not bool(too_much.get("ok", false)))
+	t.check_approx(
+		"Abgelehnter Kredit veraendert die Kasse nicht",
+		sim.economy.cash,
+		cash_before + 20_000.0,
+		0.01
+	)
+
+	# Tilgung: liquiditaetsbegrenzt und konfigurierbar.
+	sim.set_repayment_share(0.5)
+	var cash_before2 := sim.economy.cash
+	var repay := sim.repay_loan(5_000.0)
+	t.check_true("Tilgung moeglich", bool(repay.get("ok", false)))
+	t.check_approx(
+		"Kasse sinkt um den Tilgungsbetrag",
+		sim.economy.cash,
+		cash_before2 - 5_000.0,
+		0.01
+	)
+	t.check_approx(
+		"Fremdkapital sinkt um den Tilgungsbetrag",
+		sim.economy.debt,
+		15_000.0,
+		0.01
+	)
+	t.check_approx(
+		"Bilanz stimmt nach Tilgung",
+		sim.economy.balance_check(),
+		0.0,
+		1.0
+	)
+
+	# Ein ungueltiger Tilgungsanteil wird abgelehnt.
+	var bad_share := sim.set_repayment_share(1.5)
+	t.check_true("Ungueltiger Tilgungsanteil abgelehnt", not bool(bad_share.get("ok", false)))
+	t.check_approx(
+		"Tilgungsanteil unveraendert",
+		sim.economy.repayment_share,
+		0.5,
+		0.0001
+	)
+
+	# Die Automatik laesst sich abschalten: dann wird im
+	# Jahresabschluss nicht getilgt.
+	sim.economy.auto_repayment = false
+	sim.economy.repayment_share = 1.0
+	var debt_before := sim.economy.debt
+	sim._close_business_year()
+	t.check_approx(
+		"Ohne Automatik wird nicht getilgt",
+		sim.economy.debt,
+		debt_before,
+		0.01
+	)
+
+	# Die Zinsbelastung ist eine Kennzahl fuer den Berater.
+	sim.economy.interest_paid_year = 900.0
+	t.check_true(
+		"Zinsbelastung berechenbar",
+		sim.interest_burden() > 0.0
+	)
+	t.check_approx(
+		"Finanzierungskosten = Zinsen + Tilgung",
+		sim.financing_costs_year(),
+		900.0 + sim.economy.repayment_year,
+		0.01
 	)

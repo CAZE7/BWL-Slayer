@@ -145,14 +145,18 @@ func profit_at(x: float) -> float:
 
 ## Jahres-Cashflow bei Menge x (zahlungswirksam).
 ##
-## Der Gewinn enthaelt bereits die kalkulatorischen Zinsen, die nicht
-## zahlungswirksam sind – sie werden deshalb herausgerechnet. Die
-## Abschreibung ist ebenfalls nicht zahlungswirksam und wird
-## hinzugefuegt. So entsteht der zahlungswirksame Jahres-Cashflow:
+## Der Gewinn enthaelt die kalkulatorischen Zinsen, die NICHT
+## zahlungswirksam sind. Sie werden deshalb wieder herausgerechnet.
+## Die Abschreibung ist ebenfalls nicht zahlungswirksam und wird
+## hinzugefuegt:
 ##
-##   Cashflow = Gewinn + Abschreibung − kalkulatorische Zinsen
+##   Cashflow = Gewinn + Abschreibung + kalkulatorische Zinsen
+##
+## Diese Formel entspricht exakt der Legacy-Engine
+## (`profitAtX + depreciation + imputedInterest`) und ist Teil der
+## geschuetzten Paritaet. Sie darf nicht veraendert werden.
 func annual_cashflow_at(x: float) -> float:
-	return profit_at(x) + depreciation() - imputed_interest()
+	return profit_at(x) + depreciation() + imputed_interest()
 
 
 ## Amortisationsdauer in Jahren bei konstantem Jahres-Cashflow.

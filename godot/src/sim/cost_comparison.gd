@@ -185,7 +185,8 @@ static func _max_x(a: MachineSpec, b: MachineSpec) -> float:
 ##             cashflow, break_even, payback}]
 static func evaluate_at(a: MachineSpec, b: MachineSpec, quantity: float) -> Array:
 	var out: Array = []
-	for spec in [a, b]:
+	var specs: Array[MachineSpec] = [a, b]
+	for spec in specs:
 		var revenue := spec.price_per_unit * quantity
 		var variable := spec.variable_cost_per_unit * quantity
 		var depreciation := spec.depreciation()

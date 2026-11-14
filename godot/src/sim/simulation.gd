@@ -691,11 +691,15 @@ func _close_business_year() -> void:
 	# nicht – sie reduziert das Fremdkapital. Sie ist daher KEIN Aufwand
 	# und gehoert nicht in die Gewinnrechnung, sondern in den
 	# Finanzierungsbereich.
+	#
+	# Der Tilgungsanteil ist eine Entscheidung des Spielers. Voreingestellt
+	# werden 10 % des Fremdkapitals getilgt, sofern die Kasse das
+	# hergibt. Wer nicht tilgt, behaelt Liquiditaet, zahlt aber mehr
+	# Zinsen.
 	var repayment: float = 0.0
-	if economy.debt > 0.0:
-		# Standardmaessig werden 10 % des Fremdkapitals getilgt, sofern
-		# die Kasse das hergibt.
-		repayment = minf(economy.debt * 0.10, maxf(0.0, economy.cash))
+	if economy.debt > 0.0 and economy.auto_repayment:
+		var planned: float = economy.debt * clampf(economy.repayment_share, 0.0, 1.0)
+		repayment = minf(planned, maxf(0.0, economy.cash))
 		if repayment > 0.0:
 			economy.move_cash(-repayment)
 			economy.debt = maxf(0.0, economy.debt - repayment)
@@ -859,15 +863,112 @@ func divest_machine(instance_id: String, sale_price: float) -> Dictionary:
 
 
 ## Nimmt einen Kredit auf.
+##
+## Der Zinssatz richtet sich nach der Bonitaet des Unternehmens:
+## Eine hohe Eigenkapitalquote und eine niedrige Verschuldung senken
+## den Zinssatz. Das macht die Finanzierung zu einer echten
+## Entscheidung – zu viel Fremdkapital kostet mehr.
+##
+## Die Kreditaufnahme ist nur so hoch moeglich, wie die Bank
+## gewaehrt. Die Hoehe richtet sich nach dem vorhandenen Eigenkapital
+## und der vorhandenen Verschuldung.
 func take_loan(amount: float, rate: float = -1.0) -> Dictionary:
 	if amount <= 0.0:
 		return {"ok": false, "error": "Kreditbetrag muss positiv sein."}
+
+	var limit := credit_limit()
+	if amount > limit:
+		return {
+			"ok": false,
+			"error": "Die Bank gewaehrt hoechstens %s € (Eigenkapitalquote %s, Fremdkapitalquote %s)." % [
+				_format_int(limit),
+				"%.0f %%" % (equity_ratio() * 100.0),
+				"%.0f %%" % (debt_ratio() * 100.0),
+			],
+		}
+
 	economy.move_cash(amount)
 	economy.debt += amount
 	if rate >= 0.0:
 		economy.debt_rate = rate
+	else:
+		# Der Zinssatz richtet sich nach der Bonitaet.
+		economy.debt_rate = _interest_rate_for(debt_ratio())
 	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Kredit aufgenommen",
+		"%s € zu %s %% Zins. Die Liquiditaet steigt, das Fremdkapital "
+		% [_format_int(amount), "%.1f" % (economy.debt_rate * 100.0)]
+		+ "belastet die Bilanz.",
+		"info"
+	)
 	return {"ok": true, "amount": amount, "rate": economy.debt_rate}
+
+
+## Der Kreditbetrag, den die Bank gewaehrt.
+##
+## Grundlage ist das Eigenkapital. Hoeher verschuldete Unternehmen
+## bekommen weniger Kredit – so kann der Spieler nicht beliebig
+## Schulden aufnehmen.
+func credit_limit() -> float:
+	var equity := economy.equity
+	if equity <= 0.0:
+		return 0.0
+	# Bei einer FK-Quote von 100 % ist kein weiterer Kredit moeglich.
+	var room := maxf(0.0, 1.0 - debt_ratio())
+	# Zusaetzlich begrenzt das Eigenkapital die Hoehe.
+	return minf(equity * room, 500_000.0)
+
+
+## Der Zinssatz, den die Bank bei der aktuellen Verschuldung anbietet.
+##
+## 4 % bei niedriger Verschuldung, 9 % bei hoher. Dazwischen linear.
+func _interest_rate_for(current_debt_ratio: float) -> float:
+	var ratio := clampf(current_debt_ratio, 0.0, 1.0)
+	return 0.04 + ratio * 0.05
+
+
+## Setzt den Tilgungsanteil des Fremdkapitals.
+##
+## Der Anteil gilt fuer das Fremdkapital insgesamt und wird beim
+## Jahresabschluss abgetragen. 0 % bedeutet: vollstaendig auf
+## Abzahlung, Liquiditaet bleibt hoch, Zinsen laufen weiter.
+func set_repayment_share(share: float) -> Dictionary:
+	if share < 0.0 or share > 1.0:
+		return {"ok": false, "error": "Der Tilgungsanteil muss zwischen 0 und 100 % liegen."}
+	economy.repayment_share = share
+	EventBus.economy_changed.emit(economy.to_dict())
+	return {"ok": true, "share": share}
+
+
+## Die Eigenkapitalquote (Anteil des EK an der Gesamtkapitalstruktur).
+func equity_ratio() -> float:
+	var total := economy.equity + economy.debt
+	if total <= 0.0:
+		return 0.0
+	return economy.equity / total
+
+
+## Die Fremdkapitalquote.
+func debt_ratio() -> float:
+	var total := economy.equity + economy.debt
+	if total <= 0.0:
+		return 0.0
+	return economy.debt / total
+
+
+## Die gesamten Finanzierungskosten p.a. (Zinsen + Tilgung).
+func financing_costs_year() -> float:
+	return economy.interest_paid_year + economy.repayment_year
+
+
+## Die Zinsbelastung im Verhältnis zum Eigenkapital.
+##
+## Hohe Werte zeigen, dass der Kreditzins das Eigenkapital auffrisst.
+func interest_burden() -> float:
+	if economy.equity <= 0.0:
+		return 0.0
+	return economy.interest_paid_year / economy.equity
 
 
 ## Tilgt einen Kredit.

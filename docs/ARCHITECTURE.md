@@ -66,7 +66,36 @@ godot/
 **Wichtig:** Autoload-Skripte tragen **kein** `class_name`, das dem
 Autoload-Namen entspricht — Godot verbietet es, dass eine Klasse einen
 Autoload-Singleton verdeckt. `simulation.gd` heißt deshalb in der Klasse
-`SimulationEngine`; der Autoload bleibt `Simulation`.
+`SimulationEngine`; der Autoload bleibt `Simulation`. Dasselbe Prinzip
+gilt für `game_state.gd` (`GameStateStore`) und `event_bus.gd` (kein
+`class_name`).
+
+### Ereigniskette
+
+Die Kette vom Spielereignis zum sichtbaren Feedback läuft über den
+EventBus. Simulation, UI und Berater kennen sich nicht gegenseitig.
+
+```
+Spieleraktion
+   → Simulation (Buchung, Zustandswechsel)
+   → EventBus-Signal
+   → UI (Kopfzeile, Toast, Szene) + Advisor (Hinweis)
+```
+
+Signale, die den Spielablauf tragen:
+
+| Signal | Auslöser | Empfänger |
+|---|---|---|
+| `cash_changed` | jede Kassenbewegung | Kopfzeile, Advisor |
+| `order_received` | neuer Kundenauftrag | Advisor, Toast |
+| `delivery_installed` | Maschine in Betrieb | Advisor, Fabrikszene |
+| `order_completed` | Auftrag geliefert | Advisor |
+| `machine_state_changed` | Zustandswechsel einer Anlage | Fabrikszene |
+| `advisor_message_added` | neuer Hinweis | Beraterbereich, Toast |
+
+Jede Kassenbewegung läuft über `EconomyState.move_cash()`. Nur diese
+eine Stelle ändert `cash` und meldet die Änderung. Dadurch kann kein
+Zahlungsweg die Meldung vergessen — und keine Zahlung doppelt laufen.
 
 ## Die geschützten Altbestände
 
