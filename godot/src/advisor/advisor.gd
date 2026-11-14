@@ -129,12 +129,18 @@ func _on_order_completed(order: Dictionary) -> void:
 func _on_cash_changed(cash: float, delta: float) -> void:
 	if delta >= 0.0:
 		return
-	# Groessere Zahlungen sind erfahrungsgemaess die interessanten.
-	if absf(delta) < 5000.0:
-		return
 	var sim := Simulation
 	if sim == null:
 		return
+
+	# Eine Zahlung ist relevant, wenn sie einen spuerbaren Teil der
+	# Liquiditaet bindet. Die Schwelle richtet sich nach der Kasse –
+	# 10.000 Euro sind bei 80.000 Euro Kasse ein Geringes, bei
+	# 15.000 Euro Kasse ein ernstes Zeichen.
+	var threshold: float = maxf(5_000.0, absf(sim.economy.cash) * 0.15)
+	if absf(delta) < threshold:
+		return
+
 	var body := (
 		"Es sind %s € aus dem Betrieb abgeflossen. Der Kontostand liegt "
 		+ "jetzt bei %s €."
@@ -373,19 +379,61 @@ func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 		})
 
 	for m in machines:
-		var npv := m.net_present_value(0.08)
+		# Der Berater verwendet denselben Diskontsatz wie die
+		# Investitionsrechnung: den gewichteten Mittelwert aus Eigen-
+		# und Fremdkapitalzins. Sonst widerspricht er dem Vergleichsmodul.
+		var rate: float = m.spec.effective_interest_rate()
+		var npv: float = m.net_present_value(rate)
 		if npv < 0.0:
 			out.append({
 				"id": "negative_npv_%s" % m.instance_id,
 				"severity": "warning",
 				"title": "%s: Kapitalwert negativ" % m.spec.display_name,
-				"analysis": "Bei 8 %% Diskontsatz beträgt der Kapitalwert dieser Anlage %s €. Der Kapitaleinsatz ist nicht gerechtfertigt." % BWLEngine.format_eur(npv),
+				"analysis": (
+					"Bei einem Diskontsatz von %.1f %% beträgt der Kapitalwert "
+					+ "dieser Anlage %s €. Der Kapitaleinsatz ist nicht "
+					+ "gerechtfertigt."
+				) % [rate * 100.0, BWLEngine.format_eur(npv)],
 				"questions": [
 					"Bei welcher Menge wäre die Anlage rentabel?",
 					"Wie hoch müsste der Verkaufspreis sein, damit der Kapitalwert positiv wird?",
 				],
 				"lesson": "Der Kapitalwert ist die entscheidende Entscheidungsgröße: KW > 0 bedeutet Wertschöpfung.",
 				"action": "Öffne das Investitionsmodul und variiere die Menge.",
+			})
+			continue
+
+		# Der Kapitalwert ist die Annuität zum Barwert. Er beantwortet
+		# die praktische Frage: Welcher Jahresbeitrag waere die
+		# Anlage noch wert? Liegt er unter den jaehrlichen Fixkosten,
+		# verdient die Anlage ihr Kapital nicht.
+		var capital_value: float = BWLEngine.annuity_from_npv(
+			npv, rate, m.spec.useful_life_years
+		)
+		var annual_fixed: float = m.spec.total_fixed_costs()
+		if capital_value < annual_fixed:
+			out.append({
+				"id": "capital_value_below_fixed_%s" % m.instance_id,
+				"severity": "warning",
+				"title": "%s: Kapitalwert unter den Fixkosten" % m.spec.display_name,
+				"analysis": (
+					"Der Kapitalwert dieser Anlage beträgt %s € p.a. Ihre "
+					+ "jaehrlichen Fixkosten liegen bei %s €. Damit liefert "
+					+ "der Einsatz keinen Wertbeitrag."
+				) % [
+					BWLEngine.format_eur(capital_value),
+					BWLEngine.format_eur(annual_fixed),
+				],
+				"questions": [
+					"Was kostet es, die Anlage ein Jahr zu betreiben – und was bringt sie?",
+					"Ab welcher Absatzmenge dreht sich das um?",
+				],
+				"lesson": (
+					"Der Kapitalwert ist der Jahresbeitrag, den die "
+					+ "Investition gerade noch wert waere. Liegt er unter "
+					+ "den Fixkosten, verbrennt die Anlage Kapital."
+				),
+				"action": "Prüfe die Auslastung im Produktionsbereich.",
 			})
 	return out
 
