@@ -4,11 +4,11 @@
 ```
 Godot-Binary: /home/runner/godot-bin/godot
 Projektverzeichnis: /home/runner/work/BWL-Slayer/BWL-Slayer
-total 142992
-drwxr-xr-x  2 runner runner      4096 Nov 13 17:53 .
-drwxr-x--- 14 runner runner      4096 Nov 13 17:53 ..
+total 142996
+drwxr-xr-x  2 runner runner      4096 Nov 14 06:43 .
+drwxr-x--- 14 runner runner      4096 Nov 14 06:43 ..
 -rwxr-xr-x  1 runner runner 146414384 Aug 17 14:49 Godot_v4.7.2-stable_linux.x86_64
-lrwxrwxrwx  1 runner runner        55 Nov 13 17:53 godot -> /home/runner/godot-bin/Godot_v4.7.2-stable_linux.x86_64
+lrwxrwxrwx  1 runner runner        55 Nov 14 06:43 godot -> /home/runner/godot-bin/Godot_v4.7.2-stable_linux.x86_64
 ```
 
 ## Testausgabe
@@ -195,19 +195,118 @@ lrwxrwxrwx  1 runner runner        55 Nov 13 17:53 godot -> /home/runner/godot-b
   OK   Roundtrip Zustand
 
 --- Simulation · Wirtschaftliche Kennzahlen ---
-  OK   Betriebsergebnis
-  OK   Cashflow
-  OK   Fremdkapitalquote
-  OK   Liquidität gesund
-  OK   FK-Quote korrekt
-  OK   EK-Rentabilität %
 
 --- Simulation · Liquidität & Krisen ---
-  OK   Tense bei niedriger Liquidität
-  OK   Begründung vorhanden
-  OK   Critical bei überzogener Kasse
-  OK   Krisenbegründung
-  OK   Liquiditätsgrad II
+
+--- Simulation · Investitionsrechnung ---
+  OK   Effektivzins korrekt gewichtet
+  OK   Cashflow entspricht der Legacy-Definition
+  OK   Zwei Anlagen ausgewertet
+  FAIL Barwert stimmt mit der Engine ueberein – ist 222006.455338125 | erwartet -30245.1571960546
+  OK   Kapitalwert ist die Annuität zum Barwert
+  OK   Rentabilitaetsindex ueber 1 bei positivem Barwert
+  OK   Interne Rendite positiv
+  FAIL Interne Rendite unter dem Effektivzins – ist false | erwartet true
+  OK   Verlustanlage hat negativen Barwert
+  OK   Verlustanlage hat negativen Kapitalwert
+  OK   Verlustanlage hat Index unter 1
+
+--- Simulation · Finanzierung ---
+
+--- Gelaende · Belegung ---
+  OK   Gebaeude belegt
+  OK   Zelle (5,9) belegt
+  OK   Zelle (5,9) gehoert zum Gebaeude
+  OK   Zelle (6,9) belegt
+  OK   Zelle (6,9) gehoert zum Gebaeude
+  OK   Zelle (7,9) belegt
+  OK   Zelle (7,9) gehoert zum Gebaeude
+  OK   Zelle (5,10) belegt
+  OK   Zelle (5,10) gehoert zum Gebaeude
+  OK   Zelle (6,10) belegt
+  OK   Zelle (6,10) gehoert zum Gebaeude
+  OK   Zelle (7,10) belegt
+  OK   Zelle (7,10) gehoert zum Gebaeude
+  OK   Keine Zelle links vom Gebaeude belegt
+  OK   Keine Zelle unter dem Gebaeude belegt
+  OK   Keine Zelle rechts daneben belegt
+  OK   Ueberlappung wird erkannt
+  OK   Ueberlappung wird abgelehnt
+  OK   Direkt angrenzende Flaeche ist frei
+  OK   Angrenzendes Gebaeude passt
+  OK   Nach Freigabe wieder frei
+  OK   Freigabe loescht genau die eigenen Zellen
+  OK   Freigabe laesst fremde Zellen unberuehrt
+  OK   Rand links wird abgelehnt
+  OK   Rand rechts wird abgelehnt
+  OK   Rand unten wird abgelehnt
+
+--- Gelaende · Zonen und Suche ---
+  OK   Zone gesetzt
+  OK   Ausserhalb der Zone bleibt Gruen
+  OK   Freie Stelle gefunden
+  OK   Gefundene Stelle liegt in der Zone
+  OK   Gefundene Stelle ist frei
+  OK   Belegung mit der gefundenen Stelle
+  OK   Zweite Stelle weicht aus
+  OK   Koordinaten-Umrechnung stimmt
+
+--- Ablauf · Maschinen-Lieferkette ---
+  OK   Start: ORDERED
+  OK   ORDERED -> IN_TRANSIT erlaubt
+  OK   IN_TRANSIT -> ARRIVED erlaubt
+  OK   ARRIVED -> UNLOADING erlaubt
+  OK   UNLOADING -> INSTALLING erlaubt
+  OK   INSTALLING -> ACTIVE erlaubt
+  OK   Sprung ORDERED -> ACTIVE verboten
+  OK   Sprung IN_TRANSIT -> INSTALLING verboten
+  OK   Rueckwaertswechsel verboten
+  OK   Nach Schritt 1: IN_TRANSIT
+  OK   Lieferzeit gesetzt
+  OK   Nach Schritt 2: ARRIVED
+  OK   Entladezeit gesetzt
+  OK   Nach Schritt 3: UNLOADING
+  OK   Nach Schritt 4: INSTALLING
+  OK   Montagezeit gesetzt
+  OK   Nach Schritt 5: ACTIVE
+  OK   Maschine betriebsbereit
+  OK   Aus ACTIVE kein weiterer Schritt
+  OK   Label fuer UNLOADING vorhanden
+  OK   Testfall: steht in UNLOADING
+  OK   Save-Roundtrip: Zustand erhalten
+  OK   Save-Roundtrip: Restzeit erhalten
+
+--- Ablauf · Produktion & Material ---
+
+--- Ablauf · Kundenaufträge ---
+
+--- Ablauf · Investitionsentscheidung ---
+  OK   Kritische Menge berechenbar
+  OK   Kritische Menge positiv
+  OK   Unterhalb gewinnt die Anlage mit den hoeheren Fixkosten
+  FAIL Oberhalb gewinnt die Anlage mit den niedrigeren variablen Kosten – ist false | erwartet true
+  OK   Empfehlung nennt die unterhalb guenstigere Anlage
+  OK   Empfehlung beruecksichtigt die geplante Menge
+  OK   Gleiche variable Kosten: keine kritische Menge
+  OK   Hinweis auf die Fixkosten
+  OK   Auswertung liefert zwei Zeilen
+  OK   Anschaffung A ausgewiesen
+  OK   Anschaffung B ausgewiesen
+  OK   Umsatz A
+  OK   Break-Even vorhanden
+  OK   Kurvenpunkte vorhanden
+  OK   Kurvenpunkt mit Kosten A
+  OK   Kurvenpunkt mit Kosten B
+
+--- Ablauf · Jahresabschluss & Bilanz ---
+
+--- Ablauf · Nachfrage ---
+
+--- Ablauf · Materialbeschaffung ---
+
+--- Ablauf · Gesamtbetrieb über ein Jahr ---
+
+--- Ablauf · Kassenlogik ohne Doppelbuchung ---
 
 --- Persistenz · Versionierung & Migration ---
   OK   Migration: Kapital übernommen
@@ -239,6 +338,8 @@ lrwxrwxrwx  1 runner runner        55 Nov 13 17:53 godot -> /home/runner/godot-b
   OK   Fehlender Spielstand = null
   OK   Spielstände gelistet
   OK   Spielstand gelöscht
+
+--- Persistenz · Spielstand-Roundtrip ---
 
 --- Lernen · Content-Vollständigkeit ---
   OK   9 Welten vorhanden
@@ -300,6 +401,164 @@ lrwxrwxrwx  1 runner runner        55 Nov 13 17:53 godot -> /home/runner/godot-b
   OK   W8: Trainer vorhanden
   OK   W9: Trainer vorhanden
 
+--- Lernen · Zuordnungs- & Ordnungsinhalte ---
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Runde mit Kategorien
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Runde mit Karten
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Kategorie
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Begruendung
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Kategorie
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Begruendung
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Kategorie
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Begruendung
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Kategorie
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Begruendung
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Kategorie
+  OK   W1/Runde 1 · Zahlungsstromrichtung: Karte mit Begruendung
+  OK   W1/Runde 2 · Kostenbegriffe: Runde mit Kategorien
+  OK   W1/Runde 2 · Kostenbegriffe: Runde mit Karten
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Kategorie
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Begruendung
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Kategorie
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Begruendung
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Kategorie
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Begruendung
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Kategorie
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Begruendung
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Kategorie
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Begruendung
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Kategorie
+  OK   W1/Runde 2 · Kostenbegriffe: Karte mit Begruendung
+  OK   W1/Runde 3 · Kapitalarten: Runde mit Kategorien
+  OK   W1/Runde 3 · Kapitalarten: Runde mit Karten
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Kategorie
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Begruendung
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Kategorie
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Begruendung
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Kategorie
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Begruendung
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Kategorie
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Begruendung
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Kategorie
+  OK   W1/Runde 3 · Kapitalarten: Karte mit Begruendung
+  OK   W1/Prozess-Puzzle · Investitionsentscheidung: Ordnungsaufgabe mit Elementen
+  OK   W1/Investitionsrechnungs-Trichter: Runde mit Kategorien
+  OK   W1/Investitionsrechnungs-Trichter: Runde mit Karten
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Kategorie
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Begruendung
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Kategorie
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Begruendung
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Kategorie
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Begruendung
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Kategorie
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Begruendung
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Kategorie
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Begruendung
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Kategorie
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Begruendung
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Kategorie
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Begruendung
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Kategorie
+  OK   W1/Investitionsrechnungs-Trichter: Karte mit Begruendung
+  OK   W2/Fixkosten-Baukasten: Runde mit Kategorien
+  OK   W2/Fixkosten-Baukasten: Runde mit Karten
+  OK   W2/Fixkosten-Baukasten: Karte mit Kategorie
+  OK   W2/Fixkosten-Baukasten: Karte mit Begruendung
+  OK   W2/Fixkosten-Baukasten: Karte mit Kategorie
+  OK   W2/Fixkosten-Baukasten: Karte mit Begruendung
+  OK   W2/Fixkosten-Baukasten: Karte mit Kategorie
+  OK   W2/Fixkosten-Baukasten: Karte mit Begruendung
+  OK   W2/Fixkosten-Baukasten: Karte mit Kategorie
+  OK   W2/Fixkosten-Baukasten: Karte mit Begruendung
+  OK   W2/Fixkosten-Baukasten: Karte mit Kategorie
+  OK   W2/Fixkosten-Baukasten: Karte mit Begruendung
+  OK   W3/Werkzeugkarten zuordnen: Runde mit Kategorien
+  OK   W3/Werkzeugkarten zuordnen: Runde mit Karten
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Kategorie
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Begruendung
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Kategorie
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Begruendung
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Kategorie
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Begruendung
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Kategorie
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Begruendung
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Kategorie
+  OK   W3/Werkzeugkarten zuordnen: Karte mit Begruendung
+  OK   W4/Risiko-Radar: Runde mit Kategorien
+  OK   W4/Risiko-Radar: Runde mit Karten
+  OK   W4/Risiko-Radar: Karte mit Kategorie
+  OK   W4/Risiko-Radar: Karte mit Begruendung
+  OK   W4/Risiko-Radar: Karte mit Kategorie
+  OK   W4/Risiko-Radar: Karte mit Begruendung
+  OK   W4/Risiko-Radar: Karte mit Kategorie
+  OK   W4/Risiko-Radar: Karte mit Begruendung
+  OK   W4/Risiko-Radar: Karte mit Kategorie
+  OK   W4/Risiko-Radar: Karte mit Begruendung
+  OK   W4/Risiko-Radar: Karte mit Kategorie
+  OK   W4/Risiko-Radar: Karte mit Begruendung
+  OK   W4/Zerobond-Typen: Runde mit Kategorien
+  OK   W4/Zerobond-Typen: Runde mit Karten
+  OK   W4/Zerobond-Typen: Karte mit Kategorie
+  OK   W4/Zerobond-Typen: Karte mit Begruendung
+  OK   W4/Zerobond-Typen: Karte mit Kategorie
+  OK   W4/Zerobond-Typen: Karte mit Begruendung
+  OK   W4/Zerobond-Typen: Karte mit Kategorie
+  OK   W4/Zerobond-Typen: Karte mit Begruendung
+  OK   W5/Cash-Cycle-Zeitstrahl: Ordnungsaufgabe mit Elementen
+  OK   W6/Stille-Reserven-Kaskade: Ordnungsaufgabe mit Elementen
+  OK   W7/Kapitalerhöhungs-Formen: Runde mit Kategorien
+  OK   W7/Kapitalerhöhungs-Formen: Runde mit Karten
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Kategorie
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Begruendung
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Kategorie
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Begruendung
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Kategorie
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Begruendung
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Kategorie
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Begruendung
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Kategorie
+  OK   W7/Kapitalerhöhungs-Formen: Karte mit Begruendung
+  OK   W8/Kreditleihe oder Geldleihe?: Runde mit Kategorien
+  OK   W8/Kreditleihe oder Geldleihe?: Runde mit Karten
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Kategorie
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Begruendung
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Kategorie
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Begruendung
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Kategorie
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Begruendung
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Kategorie
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Begruendung
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Kategorie
+  OK   W8/Kreditleihe oder Geldleihe?: Karte mit Begruendung
+  OK   W8/Factoring oder Forfaitierung?: Runde mit Kategorien
+  OK   W8/Factoring oder Forfaitierung?: Runde mit Karten
+  OK   W8/Factoring oder Forfaitierung?: Karte mit Kategorie
+  OK   W8/Factoring oder Forfaitierung?: Karte mit Begruendung
+  OK   W8/Factoring oder Forfaitierung?: Karte mit Kategorie
+  OK   W8/Factoring oder Forfaitierung?: Karte mit Begruendung
+  OK   W8/Factoring oder Forfaitierung?: Karte mit Kategorie
+  OK   W8/Factoring oder Forfaitierung?: Karte mit Begruendung
+  OK   W8/Factoring oder Forfaitierung?: Karte mit Kategorie
+  OK   W8/Factoring oder Forfaitierung?: Karte mit Begruendung
+  OK   W9/Aktienwert-Treiber: Runde mit Kategorien
+  OK   W9/Aktienwert-Treiber: Runde mit Karten
+  OK   W9/Aktienwert-Treiber: Karte mit Kategorie
+  OK   W9/Aktienwert-Treiber: Karte mit Begruendung
+  OK   W9/Aktienwert-Treiber: Karte mit Kategorie
+  OK   W9/Aktienwert-Treiber: Karte mit Begruendung
+  OK   W9/Aktienwert-Treiber: Karte mit Kategorie
+  OK   W9/Aktienwert-Treiber: Karte mit Begruendung
+  OK   W9/Aktienwert-Treiber: Karte mit Kategorie
+  OK   W9/Aktienwert-Treiber: Karte mit Begruendung
+  OK   W9/Aktienwert-Treiber: Karte mit Kategorie
+  OK   W9/Aktienwert-Treiber: Karte mit Begruendung
+  OK   W9/Aktienwert-Treiber: Karte mit Kategorie
+  OK   W9/Aktienwert-Treiber: Karte mit Begruendung
+  OK   W9/Fundamentale Aktienbewertung: Ordnungsaufgabe mit Elementen
+  OK   12 Zuordnungsrunden vorhanden
+  OK   62 Karten vorhanden
+  OK   4 Ordnungsaufgaben vorhanden
+  OK   Ordnungsaufgaben mit Lösungsweg
+
 --- Lernen · Aufgabenlogik ---
   OK   W2 geladen
   OK   Aufgabe hat Felder
@@ -324,31 +583,64 @@ lrwxrwxrwx  1 runner runner        55 Nov 13 17:53 godot -> /home/runner/godot-b
   OK   W3 gesperrt
   OK   W3 nach W1 gesperrt
   OK   W3 nach W2 frei
-  FAIL Höherer Punktwert zählt – ist false | erwartet true
-  FAIL Niedrigerer Punktwert überschreibt nicht – ist false | erwartet true
+  OK   Höherer Punktwert zählt
+  OK   Niedrigerer Punktwert überschreibt nicht
   OK   Roundtrip XP
   OK   Roundtrip Weltenfortschritt
 
+--- Lernen · Teilaufgaben-Freischaltung ---
+  OK   Einzelne Teilaufgabe schaltet die Stufe nicht frei
+  OK   Welt W1 hat Teilaufgaben
+  OK   Alle Teilaufgaben geloest: Stufe vollstaendig
+  OK   Kein doppelter XP-Gewinn
+  OK   Fortschritt einer anderen Welt bleibt unberuehrt
+
 ========================================
-ERGEBNIS: 279 bestanden, 2 fehlgeschlagen
+ERGEBNIS: 512 bestanden, 3 fehlgeschlagen
 ========================================
 
 Fehlgeschlagene Prüfungen:
-  Lernen · Fortschritt & Freischaltung ::   FAIL Höherer Punktwert zählt – ist false | erwartet true
-  Lernen · Fortschritt & Freischaltung ::   FAIL Niedrigerer Punktwert überschreibt nicht – ist false | erwartet true
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
-2 Pruefungen fehlgeschlagen.
+  Simulation · Investitionsrechnung ::   FAIL Barwert stimmt mit der Engine ueberein – ist 222006.455338125 | erwartet -30245.1571960546
+  Simulation · Investitionsrechnung ::   FAIL Interne Rendite unter dem Effektivzins – ist false | erwartet true
+  Ablauf · Investitionsentscheidung ::   FAIL Oberhalb gewinnt die Anlage mit den niedrigeren variablen Kosten – ist false | erwartet true
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+--- Lernen · Teilaufgaben-Freischaltung ---
+  OK   Einzelne Teilaufgabe schaltet die Stufe nicht frei
+  OK   Welt W1 hat Teilaufgaben
+  OK   Alle Teilaufgaben geloest: Stufe vollstaendig
+  OK   Kein doppelter XP-Gewinn
+  OK   Fortschritt einer anderen Welt bleibt unberuehrt
+RUN-TESTS: Suite fertig: res://tests/test_learning.gd
+
+========================================
+ERGEBNIS: 512 bestanden, 3 fehlgeschlagen
+========================================
+
+Fehlgeschlagene Prüfungen:
+  Simulation · Investitionsrechnung ::   FAIL Barwert stimmt mit der Engine ueberein – ist 222006.455338125 | erwartet -30245.1571960546
+  Simulation · Investitionsrechnung ::   FAIL Interne Rendite unter dem Effektivzins – ist false | erwartet true
+  Ablauf · Investitionsentscheidung ::   FAIL Oberhalb gewinnt die Anlage mit den niedrigeren variablen Kosten – ist false | erwartet true
+
+
+3 Pruefungen fehlgeschlagen.
+SCRIPT ERROR: Parse Error: Cannot infer the type of "limit" variable because the value doesn't have a set type.
+          at: GDScript::reload (res://src/advisor/advisor.gd:459)
+ERROR: Failed to load script "res://src/advisor/advisor.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+ERROR: Failed to instantiate an autoload, script 'res://src/advisor/advisor.gd' does not inherit from 'Node'.
+   at: start (main/main.cpp:4539)
 ```
 
 ## Testbericht
 ```
 {
-  "failed": 2,
+  "failed": 3,
   "failures": [
-    "Lernen · Fortschritt & Freischaltung ::   FAIL Höherer Punktwert zählt – ist false | erwartet true",
-    "Lernen · Fortschritt & Freischaltung ::   FAIL Niedrigerer Punktwert überschreibt nicht – ist false | erwartet true"
+    "Simulation · Investitionsrechnung ::   FAIL Barwert stimmt mit der Engine ueberein – ist 222006.455338125 | erwartet -30245.1571960546",
+    "Simulation · Investitionsrechnung ::   FAIL Interne Rendite unter dem Effektivzins – ist false | erwartet true",
+    "Ablauf · Investitionsentscheidung ::   FAIL Oberhalb gewinnt die Anlage mit den niedrigeren variablen Kosten – ist false | erwartet true"
   ],
-  "passed": 279,
-  "timestamp": "2026-11-13T17:54:01",
-  "total": 281
+  "passed": 512,
+  "timestamp": "2026-11-14T06:43:45",
+  "total": 515
 }```
