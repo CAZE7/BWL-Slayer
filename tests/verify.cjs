@@ -194,7 +194,8 @@ chk('CAPM-Wert Gordon (D1=4, g=3 %)', FIN.gordon(4, FIN.capm(0.03, 1.4, 0.09), 0
 const ts = FIN.twoStageDDM(2, 0.15, 3, 0.03, 0.09);
 chk('Zweiphasen: D3', ts.flows[2].dividend, 2.645, 0.0005);
 chk('Zweiphasen: Terminal Value t3', ts.terminalValue, 45.41, 0.01);
-chk('Zweiphasen: Wert heute', ts.presentValue, 40.86, 0.01);
+// 40.8748 exakt; die 0.86 im Blueprint war ein Rundungsfehler (Terminal Value 45.4058 + explizit 5.8132)
+chk('Zweiphasen: Wert heute', ts.presentValue, 40.87, 0.01);
 chk('Nachhaltiges Wachstum (b=60 %, ROE=12 %) %', FIN.sustainableGrowth(0.6, 0.12) * 100, 7.2, 0.001);
 chk('Fairer Wert (D1=1,2, r=9 %, g=7,2 %)', FIN.gordon(1.2, 0.09, 0.072), 66.67, 0.01);
 chk('Bewertung über KGV-Multiple (EPS 2,875, KGV 22)', FIN.valuationByMultiple(2.875, 22), 63.25, 0.01);

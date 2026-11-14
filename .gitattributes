@@ -1,0 +1,14 @@
+# Zeilenenden: LF für Skripte, CRLF für Windows-spezifische Dateien
+*.gd text eol=lf
+*.cjs text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+*.cfg text eol=lf
+*.godot text eol=lf

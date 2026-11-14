@@ -1,0 +1,18 @@
+# Godot
+.godot/
+.godot-tools/
+*.import.bak
+
+# Export-Artefakte
+/build/
+/godot/build/
+export_presets.cfg.local
+
+# Node (Legacy-Build-Werkzeuge)
+node_modules/
+npm-debug.log*
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+*.swp

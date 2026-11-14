@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#11161f"/>
+      <stop offset="1" stop-color="#070a10"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f0c46a"/>
+      <stop offset="1" stop-color="#b3802c"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="22" fill="url(#bg)"/>
+  <rect x="8" y="8" width="112" height="112" rx="18" fill="none" stroke="#3fb6c8" stroke-opacity="0.22" stroke-width="2"/>
+  <!-- Factory silhouette -->
+  <g fill="url(#gold)">
+    <rect x="26" y="76" width="18" height="26"/>
+    <rect x="47" y="62" width="18" height="40"/>
+    <rect x="68" y="50" width="18" height="52"/>
+  </g>
+  <g fill="#3fb6c8" fill-opacity="0.75">
+    <rect x="89" y="70" width="14" height="32"/>
+  </g>
+  <!-- Sawtooth roof -->
+  <path d="M26 76 L35 68 L44 76 Z" fill="#6fdcea" fill-opacity="0.5"/>
+  <path d="M47 62 L56 54 L65 62 Z" fill="#6fdcea" fill-opacity="0.5"/>
+  <path d="M68 50 L77 42 L86 50 Z" fill="#6fdcea" fill-opacity="0.5"/>
+  <!-- Ground line -->
+  <rect x="22" y="102" width="84" height="4" rx="2" fill="#3fb6c8" fill-opacity="0.4"/>
+</svg>
