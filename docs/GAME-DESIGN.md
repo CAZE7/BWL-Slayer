@@ -80,6 +80,29 @@ Materialverbrauch = Tagesproduktion × Materialbedarf je Stück
 Fehlt Material, läuft die Anlage im Leerlauf. Das ist im Tagesprotokoll
 sichtbar („Materialengpass – Anlage im Leerlauf“).
 
+#### Beschaffung mit Vorlauf
+
+Material kommt **nicht sofort**. Eine Bestellung wird bezahlt, die
+Ware trifft nach der Lieferzeit ein:
+
+```
+Reichweite = Bestand ÷ Tagesbedarf
+```
+
+Der Bestand muss immer die Lieferzeit überbrücken. Andernfalls steht
+die Anlage still, während die Fixkosten weiterlaufen. Der Berater
+warnt, **bevor** es soweit ist.
+
+Zwei Wege stehen dem Spieler offen:
+
+| Weg | Vorteil | Nachteil |
+|---|---|---|
+| Sofortkauf | Ware ist sofort da, keine Unterbrechung | Bindet sofort Kapital |
+| Bestellung mit Vorlauf | Kapital bleibt länger verfügbar | Produktion stoppt, wenn der Bestand nicht reicht |
+
+Die Materiallieferungen gehören zum Spielstand und werden beim Laden
+wiederhergestellt.
+
 ## Der Jahresabschluss
 
 Der Abschluss ist die Stelle, an der die BWL sichtbar wird. In dieser
@@ -194,9 +217,15 @@ K_fix = Fixkosten + (A₀ − L)/n + (A₀ + L)/2 · i
 ```
 
 - **Unterhalb** der kritischen Menge gewinnt die Anlage mit den
-  **höheren** Fixkosten (der Fixkostenblock dominiert).
+  **niedrigeren** Fixkosten (der Fixkostenblock dominiert: `K = k_var·x + F`).
 - **Oberhalb** gewinnt die Anlage mit den **niedrigeren** variablen
-  Stückkosten.
+  Stückkosten (der Stückpreis dominiert).
+
+In der **Gewinnbetrachtung** `G = db·x − F` gelten die umgekehrten
+Regeln für den Fixkostenblock: Unterhalb gewinnt die Anlage mit den
+**höheren** Fixkosten, weil ihr Abzug kleiner ist; oberhalb gewinnt
+die Anlage mit dem **höheren Deckungsbeitrag**. Die Modi unterscheiden
+sich also fachlich — deshalb gibt es zwei Regeln.
 
 Die Empfehlung wird **gegen die tatsächlichen Kurven geprüft**. Stimmt
 sie nicht, wird sie gespiegelt — so kann sich kein Vorzeichenfehler in
@@ -206,9 +235,31 @@ Gleiche variable Stückkosten ⇒ keine kritische Menge. Dann ist die
 Fixkostenhöhe die entscheidende Größe, und genau das steht in der
 Empfehlung.
 
+## Finanzierung
+
+Fremdkapital ist eine Entscheidung mit echten Folgen, nicht eine
+Notlösung:
+
+| Größe | Wirkung |
+|---|---|
+| Kreditrahmen | richtet sich nach dem Eigenkapital und der Verschuldung |
+| Zinssatz | 4 % bei niedriger Verschuldung, 9 % bei hoher (linear) |
+| Tilgungsanteil | Spielentscheidung: 0 % bis 100 % des Fremdkapitals p.a. |
+| Zinsbelastung | Zinskosten im Verhältnis zum Eigenkapital |
+
+Der Spieler stellt den Tilgungsanteil selbst ein. Wer nicht tilgt,
+behält Liquidität für die nächste Investition, zahlt aber mehr
+Zinsen. Der Kreditrahmen begrenzt die Verschuldung, damit das Spiel
+nicht in eine Schuldenfalle kippt.
+
+Der Berater warnt bei einer Fremdkapitalquote über 50 %, bei einer
+Zinsbelastung über 15 % des Eigenkapitals und weist auf einen
+ungenutzten Kreditrahmen hin — mit der Frage, ob eine Investition
+mehr bringt als der Kreditzins.
+
 ## Der Unternehmensberater
 
-Der Berater analysiert den **tatsächlichen** Zustand und liefert sieben
+Der Berater analysiert den **tatsächlichen** Zustand und liefert elf
 Module:
 
 | Modul | Erkennt |
@@ -221,6 +272,14 @@ Module:
 | Effizienz | Fixkosten je Stück |
 | Lieferkette | Maschinen, die Kapital binden ohne zu produzieren |
 | Kapitalbindung | Anlagevermögen je Kapazitätseinheit |
+| verlorene Aufträge | Nachfrage, die nicht bedient werden konnte |
+| Finanzierung | zu hohe Verschuldung, Zinsbelastung, ungenutzter Kreditrahmen |
+| Materialversorgung | Bestand reicht nicht bis zur nächsten Lieferung |
+
+Zusätzlich reagiert der Berater auf **Spielereignisse**: neuer
+Kundenauftrag, installierte Maschine, abgeschlossener Auftrag,
+Zahlung über 5.000 €. Jedes Ereignis wird erklärt — mit der
+wirtschaftlichen Folge, nicht nur dem Faktum.</new_text>
 
 Jeder Hinweis hat fünf Teile: **Analyse** (mit Zahlen aus dem
 Betrieb), **Fragen** (die zum Nachdenken führen), **Lektion** (die

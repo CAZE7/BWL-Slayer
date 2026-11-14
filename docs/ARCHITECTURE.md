@@ -92,10 +92,25 @@ Signale, die den Spielablauf tragen:
 | `order_completed` | Auftrag geliefert | Advisor |
 | `machine_state_changed` | Zustandswechsel einer Anlage | Fabrikszene |
 | `advisor_message_added` | neuer Hinweis | Beraterbereich, Toast |
+| `notification` | allgemeine Meldung | Toast |
+
+Der Berater hört auf `order_received`, `delivery_installed`,
+`order_completed` und `cash_changed`. Er erklärt jedes dieser
+Ereignisse wirtschaftlich — mit Frage, Lektion und Handlung.
 
 Jede Kassenbewegung läuft über `EconomyState.move_cash()`. Nur diese
 eine Stelle ändert `cash` und meldet die Änderung. Dadurch kann kein
 Zahlungsweg die Meldung vergessen — und keine Zahlung doppelt laufen.
+
+### Beschaffung
+
+Material hat Vorlauf. `Simulation.order_material()` bucht die Zahlung
+sofort, legt aber eine Materiallieferung mit Restlaufzeit an. Erst
+wenn die Lieferzeit abgelaufen ist, geht die Ware ins Lager.
+
+`material_coverage_days()` beantwortet die Planungsfrage: Wie viele
+Tage Produktion sichert der Bestand noch? Der Berater vergleicht das
+mit der Lieferzeit und warnt **vor** dem Produktionsstopp.
 
 ## Die geschützten Altbestände
 
