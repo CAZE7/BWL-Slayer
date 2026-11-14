@@ -80,6 +80,17 @@ Materialverbrauch = Tagesproduktion × Materialbedarf je Stück
 Fehlt Material, läuft die Anlage im Leerlauf. Das ist im Tagesprotokoll
 sichtbar („Materialengpass – Anlage im Leerlauf“).
 
+#### Getrennte Materialarten
+
+Jede Anlage verbraucht ihre **eigene Materialart**. Die Förderbandlinie
+arbeitet mit Stahl, der Verpackungsautomat mit Verpackungsmaterial.
+Ein Bestand ersetzt keinen anderen: Wer Stahl im Lager hat, kann
+deshalb keine Verpackung produzieren.
+
+Die Bestände werden getrennt gelagert, getrennt bestellt und getrennt
+bewertet. Der Lagerbestand ist damit ein eigener Vermögenswert je
+Materialart.
+
 #### Beschaffung mit Vorlauf
 
 Material kommt **nicht sofort**. Eine Bestellung wird bezahlt, die
@@ -274,7 +285,7 @@ Module:
 | Kapitalbindung | Anlagevermögen je Kapazitätseinheit |
 | verlorene Aufträge | Nachfrage, die nicht bedient werden konnte |
 | Finanzierung | zu hohe Verschuldung, Zinsbelastung, ungenutzter Kreditrahmen |
-| Materialversorgung | Bestand reicht nicht bis zur nächsten Lieferung |
+| Materialversorgung | je Materialart: Bestand reicht nicht bis zur nächsten Lieferung |
 
 Zusätzlich reagiert der Berater auf **Spielereignisse**: neuer
 Kundenauftrag, installierte Maschine, abgeschlossener Auftrag,
