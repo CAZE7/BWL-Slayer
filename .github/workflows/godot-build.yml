@@ -1,0 +1,515 @@
+name: Godot Build & Tests
+
+# ============================================================
+# BWL Slayer · CI
+#
+# Einzige Versionsquelle: .godot-version
+# Editor-Binary, Export-Templates und Workflow nutzen dieselbe Version.
+#
+# Jobs:
+#   1. test     – headless Import, GDScript-Tests, Wirtschaftstests
+#   2. export   – Windows-Desktop-Build (EXE + ZIP)
+#   3. release  – GitHub-Release (nur bei Tags, nach bestandenen Tests)
+# ============================================================
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==========================================================
+  # 1 · Tests
+  # ==========================================================
+  test:
+    name: Tests & Headless Import
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Version aus .godot-version lesen und pinnen
+        run: |
+          GODOT_VERSION="$(tr -d '[:space:]' < .godot-version)"
+          echo "GODOT_VERSION=${GODOT_VERSION}" >> "$GITHUB_ENV"
+          # Godot erwartet die Export-Templates unter einem Verzeichnis,
+          # in dem der Versionsstring normalisiert ist: "4.7.2-stable"
+          # wird zu "4.7.2.stable". Ohne diese Umbenennung findet der
+          # Exporter die Templates nicht.
+          GODOT_TEMPLATE_DIR="${GODOT_VERSION/-stable/.stable}"
+          echo "GODOT_TEMPLATE_DIR=${GODOT_TEMPLATE_DIR}" >> "$GITHUB_ENV"
+          echo "Gepinnte Godot-Version: ${GODOT_VERSION} (Templates: ${GODOT_TEMPLATE_DIR})"
+
+      - name: Godot Editor herunterladen
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/godot-bin"
+          # Die Asset-ID wird über die Release-API aufgelöst. Der direkte
+          # Asset-Link würde auf objects.githubusercontent.com umleiten,
+          # was auf dem Runner nicht immer funktioniert.
+          ASSET_ID="$(python3 tools/resolve_asset.py "$GODOT_VERSION" "Godot_v${GODOT_VERSION}_linux.x86_64.zip")"
+          echo "Asset-ID: ${ASSET_ID}"
+          if [ -z "$ASSET_ID" ]; then
+            echo "FEHLER: Godot-Editor fuer ${GODOT_VERSION} nicht gefunden" >&2
+            exit 1
+          fi
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/godotengine/godot/releases/assets/${ASSET_ID}" > godot.zip
+          SIZE="$(stat -c%s godot.zip)"
+          echo "Groesse: ${SIZE} Bytes"
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "FEHLER: Download unvollstaendig (${SIZE} Bytes)" >&2
+            exit 1
+          fi
+          rm -rf "$HOME/godot-bin"/*
+          unzip -q -o godot.zip -d "$HOME/godot-bin"
+          ls -la "$HOME/godot-bin"
+          BIN="$(find "$HOME/godot-bin" -maxdepth 1 -type f -name 'Godot_v*_linux.x86_64' | head -n1)"
+          if [ -z "$BIN" ]; then
+            echo "FEHLER: Godot-Binary nicht gefunden in $HOME/godot-bin" >&2
+            exit 1
+          fi
+          chmod +x "$BIN"
+          ln -sf "$BIN" "$HOME/godot-bin/godot"
+          "$HOME/godot-bin/godot" --version
+
+      - name: Export-Templates herunterladen
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}"
+          ASSET_ID="$(python3 tools/resolve_asset.py "$GODOT_VERSION" "Godot_v${GODOT_VERSION}_export_templates.tpz")"
+          echo "Asset-ID: ${ASSET_ID}"
+          if [ -z "$ASSET_ID" ]; then
+            echo "FEHLER: Export-Templates fuer ${GODOT_VERSION} nicht gefunden" >&2
+            exit 1
+          fi
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/godotengine/godot/releases/assets/${ASSET_ID}" > templates.tpz
+          TSIZE="$(stat -c%s templates.tpz)"
+          echo "Groesse: ${TSIZE} Bytes"
+          if [ "$TSIZE" -lt 1000000 ]; then
+            echo "FEHLER: Template-Download unvollstaendig (${TSIZE} Bytes)" >&2
+            exit 1
+          fi
+          TMP="$(mktemp -d)"
+          unzip -q -o templates.tpz -d "$TMP"
+          if [ -d "$TMP/templates" ]; then
+            cp -r "$TMP/templates/." "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}/"
+          else
+            cp -r "$TMP/." "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}/"
+          fi
+          rm -rf "$TMP" templates.tpz
+          ls "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}/" | head
+
+      - name: Content und Referenzwerte regenerieren
+        run: |
+          set -euo pipefail
+          # Lerncontent und Referenzwerte der Engine-Paritaet werden immer
+          # frisch aus dem JS-Original erzeugt - nie veraltet.
+          node tools/export_content.cjs
+          node tools/generate_reference.cjs
+          node tools/generate_traceability.cjs
+
+      - name: Statische GDScript-Pruefung
+        run: node tools/check_gdscript.cjs
+
+      - name: JavaScript-Engine verifizieren
+        run: node tests/verify.cjs
+
+      - name: Projekt headless importieren
+        run: |
+          set -uo pipefail
+          # Der Import meldet Skript-Compile-Fehler. Wir sammeln sie in
+          # einer Datei und geben sie als Annotation aus, damit ein
+          # Syntaxfehler nicht nur als "Import fehlgeschlagen" auffaellt.
+          "$HOME/godot-bin/godot" --headless --path godot --import 2>&1 | tee godot/import.log
+          CODE="${PIPESTATUS[0]}"
+          echo "--- Import-Ausgabe ---"
+          cat godot/import.log
+          echo "--- Import-Ausgabe (Ende) ---"
+          # Das Import-Protokoll wird nicht als Annotation ausgegeben:
+          # GitHub begrenzt die Anzahl der Annotationen, und die
+          # Fortschrittszeilen von Godot wuerden das Limit fuellen.
+          if [ "$CODE" -ne 0 ]; then
+            echo "FEHLER: Headless-Import fehlgeschlagen (Exit $CODE)" >&2
+            exit "$CODE"
+          fi
+
+      - name: GDScript-Tests ausfuehren
+        run: |
+          set -uo pipefail
+          # Vorbedingungen pruefen: ohne klare Meldung ist ein Fehler
+          # an dieser Stelle schwer zu finden.
+          {
+            echo "Godot-Binary: $HOME/godot-bin/godot"
+            echo "Projektverzeichnis: $(pwd)"
+            ls -la "$HOME/godot-bin" 2>&1 || true
+          } > godot/test-step.log 2>&1
+          echo "Godot-Binary: $HOME/godot-bin/godot"
+          if [ ! -x "$HOME/godot-bin/godot" ]; then
+            echo "FEHLER: Godot-Binary fehlt oder ist nicht ausfuehrbar." >&2
+            ls -la "$HOME/godot-bin" >&2 || true
+            exit 1
+          fi
+          "$HOME/godot-bin/godot" --version
+          # Die Ausgabe wird in eine Datei gespiegelt: selbst wenn der
+          # Prozess haengt, bleibt der Testfortschritt sichtbar.
+          # Einfache, ueberall verfuegbare Form von timeout. Die
+          # Langoptionen --signal und --kill-after sind auf dem
+          # ubuntu-runner zwar verfuegbar, die einfache Form ist
+          # robuster.
+          timeout 180 "$HOME/godot-bin/godot" --headless --path godot \
+            --script res://tests/run_tests.gd 2>&1 | tee godot/test-output.log
+          CODE="${PIPESTATUS[0]}"
+          # Godot schreibt seinen Verlauf zusaetzlich nach user://. Falls
+          # stdout durch einen Abbruch verloren ging, wird diese Datei
+          # nachgezogen.
+          USER_LOG="$(find "$HOME/.local/share/godot/app_userdata" -name 'test-output.log' 2>/dev/null | head -n1 || true)"
+          if [ -n "$USER_LOG" ] && [ -s "$USER_LOG" ]; then
+            cp "$USER_LOG" godot/test-output.log
+            echo "Testausgabe aus user:// uebernommen."
+          elif [ ! -s godot/test-output.log ]; then
+            echo "WARNUNG: Weder stdout noch user:// lieferten eine Testausgabe." >&2
+          fi
+          # Der JSON-Bericht wird zuverlaessig nach user:// geschrieben.
+          # Ein Schreiben nach res:// ist zur Laufzeit nicht garantiert.
+          USER_REPORT="$(find "$HOME/.local/share/godot/app_userdata" -name 'report.json' -path '*test-report*' 2>/dev/null | head -n1 || true)"
+          if [ -n "$USER_REPORT" ] && [ -s "$USER_REPORT" ]; then
+            mkdir -p godot/test-report
+            cp "$USER_REPORT" godot/test-report/report.json
+            echo "Testbericht aus user:// uebernommen."
+          else
+            echo "WARNUNG: Kein Testbericht unter user:// gefunden." >&2
+          fi
+          echo "--- Testausgabe (Beginn) ---"
+          if [ -f godot/test-output.log ]; then
+            cat godot/test-output.log
+          else
+            echo "(keine Datei godot/test-output.log)"
+          fi
+          echo "--- Testausgabe (Ende) ---"
+          echo "Godot-Exit-Code: ${CODE}"
+          # Die rohe Prozessausgabe als Annotation: dort stehen GDScript
+          # Laufzeitfehler (Parse-Error, Abstuerze), die nicht im
+          # JSON-Bericht landen, weil der Lauf vorher abbricht.
+          #
+          # Zusaetzlich wird die Datei als Artefakt-Name umbenannt, damit
+          # der Inhalt eindeutig zuordenbar bleibt.
+          if [ -f godot/test-output.log ]; then
+            cp godot/test-output.log godot/test-output.copy.log
+          fi
+          python3 tools/report_tests.py --raw godot/test-output.log "Testausgabe" || true
+          python3 tools/report_tests.py --raw godot/test-output.copy.log "Testausgabe-Kopie" || true
+          python3 tools/report_tests.py --raw godot/test-step.log "Testschritt" || true
+          # Was tatsaechlich auf der Platte liegt, in die Step-Summary
+          # schreiben. Die Summary ist ueber die REST-API abrufbar.
+          {
+            echo "## Testlauf – Dateien"
+            echo ""
+            for F in godot/test-output.log godot/test-report/report.json; do
+              echo "### $F"
+              echo ""
+              if [ -f "$F" ]; then
+                echo '```'
+                head -c 4000 "$F"
+                echo '```'
+              else
+                echo "FEHLT"
+              fi
+              echo ""
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Die Zusammenfassung auch als Job-Annotation ausgeben: sie ist
+          # ueber die GitHub-API lesbar, auch wenn die Logdatei selbst
+          # nicht abrufbar ist.
+          if [ -f godot/test-report/report.json ]; then
+            python3 tools/report_tests.py godot/test-report/report.json
+            {
+              echo "## BWL Slayer · Testergebnis"
+              echo ""
+              echo '```'
+              cat godot/test-report/report.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            # Zusaetzlich als Workflow-Annotation je Pruefung: Annotationen
+            # sind ueber die REST-API lesbar, das Job-Log dagegen nicht.
+            python3 tools/report_tests.py --annotations godot/test-report/report.json || true
+          else
+            echo "FEHLER: Kein Testbericht geschrieben" >&2
+          fi
+          if [ "$CODE" -eq 124 ]; then
+            echo "FEHLER: Testlauf hat das Zeitlimit ueberschritten" >&2
+            exit 124
+          fi
+          if [ "$CODE" -ne 0 ]; then
+            echo "FEHLER: GDScript-Tests fehlgeschlagen (Exit $CODE)" >&2
+            exit "$CODE"
+          fi
+          # Wichtig: Ein Parse-Fehler im Testskript fuehrt zu Exit-Code 0.
+          # Der Bericht muss daher zwingend vorhanden sein.
+          if [ ! -s godot/test-report/report.json ]; then
+            echo "FEHLER: Kein Testbericht geschrieben - das Testskript wurde vermutlich nicht ausgefuehrt." >&2
+            exit 1
+          fi
+          # Fehlgeschlagene Pruefungen im Bericht melden, auch wenn der
+          # Exit-Code 0 ist (z. B. bei einem abgebrochenen Lauf).
+          FAILED="$(python3 -c 'import json,sys; d=json.load(open("godot/test-report/report.json")); print(d.get("failed", 0))' 2>/dev/null || echo "?")"
+          PASSED="$(python3 -c 'import json,sys; d=json.load(open("godot/test-report/report.json")); print(d.get("passed", 0))' 2>/dev/null || echo "?")"
+          echo "Ergebnis: ${PASSED} bestanden, ${FAILED} fehlgeschlagen"
+          if [ "$FAILED" != "0" ] && [ "$FAILED" != "?" ]; then
+            echo "FEHLER: ${FAILED} Pruefungen fehlgeschlagen." >&2
+            exit 1
+          fi
+          echo "Alle GDScript-Tests bestanden."
+
+      - name: Test-Bericht hochladen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: |
+            godot/test-report/
+            godot/test-output.log
+            godot/test-step.log
+          if-no-files-found: ignore
+
+      - name: Diagnose in den Branch schreiben
+        if: failure()
+        continue-on-error: true
+        run: |
+          # Artefakte und Job-Logs sind aus manchen Netzen nicht
+          # abrufbar. Deshalb wird der Diagnoseinhalt direkt in den
+          # Branch geschrieben – dort ist er immer lesbar.
+          set -uo pipefail
+          mkdir -p ci-diagnostics
+          {
+            echo "# CI-Diagnose"
+            echo ""
+            echo "## Testschritt"
+            echo '```'
+            cat godot/test-step.log 2>/dev/null || echo "(keine Datei)"
+            echo '```'
+            echo ""
+            echo "## Testausgabe"
+            echo '```'
+            cat godot/test-output.log 2>/dev/null || echo "(keine Datei)"
+            echo '```'
+            echo ""
+            echo "## Testbericht"
+            echo '```'
+            cat godot/test-report/report.json 2>/dev/null || echo "(keine Datei)"
+            echo '```'
+          } > ci-diagnostics/last-run.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-diagnostics/last-run.md
+          git commit -m "CI: Diagnose des letzten Testlaufs" || echo "Keine Aenderung."
+          # Die Diagnose geht auf einen eigenen Branch. So entstehen keine
+          # Merge-Konflikte mit dem Arbeitsbranch und die Diagnose bleibt
+          # trotzdem ueber die API abrufbar.
+          git push --force origin HEAD:refs/heads/ci-diagnostics || echo "Push nicht moeglich."
+
+  # ==========================================================
+  # 2 · Windows-Export
+  # ==========================================================
+  export:
+    name: Windows Desktop Build
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Version pinnen
+        run: |
+          GODOT_VERSION="$(tr -d '[:space:]' < .godot-version)"
+          echo "GODOT_VERSION=${GODOT_VERSION}" >> "$GITHUB_ENV"
+          # Godot erwartet die Export-Templates unter einem Verzeichnis,
+          # in dem der Versionsstring normalisiert ist: "4.7.2-stable"
+          # wird zu "4.7.2.stable".
+          GODOT_TEMPLATE_DIR="${GODOT_VERSION/-stable/.stable}"
+          echo "GODOT_TEMPLATE_DIR=${GODOT_TEMPLATE_DIR}" >> "$GITHUB_ENV"
+          echo "Gepinnte Godot-Version: ${GODOT_VERSION} (Templates: ${GODOT_TEMPLATE_DIR})"
+
+      - name: Godot Editor herunterladen
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/godot-bin"
+          ASSET_ID="$(python3 tools/resolve_asset.py "$GODOT_VERSION" "Godot_v${GODOT_VERSION}_linux.x86_64.zip")"
+          echo "Asset-ID: ${ASSET_ID}"
+          if [ -z "$ASSET_ID" ]; then
+            echo "FEHLER: Godot-Editor fuer ${GODOT_VERSION} nicht gefunden" >&2
+            exit 1
+          fi
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/godotengine/godot/releases/assets/${ASSET_ID}" > godot.zip
+          SIZE="$(stat -c%s godot.zip)"
+          echo "Groesse: ${SIZE} Bytes"
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "FEHLER: Download unvollstaendig (${SIZE} Bytes)" >&2
+            exit 1
+          fi
+          rm -rf "$HOME/godot-bin"/*
+          unzip -q -o godot.zip -d "$HOME/godot-bin"
+          ls -la "$HOME/godot-bin"
+          BIN="$(find "$HOME/godot-bin" -maxdepth 1 -type f -name 'Godot_v*_linux.x86_64' | head -n1)"
+          if [ -z "$BIN" ]; then
+            echo "FEHLER: Godot-Binary nicht gefunden" >&2
+            exit 1
+          fi
+          chmod +x "$BIN"
+          ln -sf "$BIN" "$HOME/godot-bin/godot"
+          "$HOME/godot-bin/godot" --version
+
+      - name: Export-Templates herunterladen
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}"
+          ASSET_ID="$(python3 tools/resolve_asset.py "$GODOT_VERSION" "Godot_v${GODOT_VERSION}_export_templates.tpz")"
+          echo "Asset-ID: ${ASSET_ID}"
+          if [ -z "$ASSET_ID" ]; then
+            echo "FEHLER: Export-Templates fuer ${GODOT_VERSION} nicht gefunden" >&2
+            exit 1
+          fi
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/godotengine/godot/releases/assets/${ASSET_ID}" > templates.tpz
+          TSIZE="$(stat -c%s templates.tpz)"
+          echo "Groesse: ${TSIZE} Bytes"
+          if [ "$TSIZE" -lt 1000000 ]; then
+            echo "FEHLER: Template-Download unvollstaendig (${TSIZE} Bytes)" >&2
+            exit 1
+          fi
+          TMP="$(mktemp -d)"
+          unzip -q -o templates.tpz -d "$TMP"
+          if [ -d "$TMP/templates" ]; then
+            cp -r "$TMP/templates/." "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}/"
+          else
+            cp -r "$TMP/." "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATE_DIR}/"
+          fi
+          rm -rf "$TMP" templates.tpz
+
+      - name: Content und Referenzwerte regenerieren
+        run: |
+          node tools/export_content.cjs
+          node tools/generate_reference.cjs
+          node tools/generate_traceability.cjs
+          node tools/generate_traceability.cjs
+
+      - name: Projekt importieren
+        run: |
+          "$HOME/godot-bin/godot" --headless --path godot --import
+
+      - name: Windows-Build erzeugen
+        run: |
+          set -uo pipefail
+          # WICHTIG: Godot interpretiert den Ausgabepfad relativ zum
+          # Projektordner (--path godot). "godot/build/..." wuerde daher
+          # zu "godot/godot/build/..." werden. Deshalb wird der Pfad
+          # absolut angegeben – und das Verzeichnis muss existieren,
+          # der Exporter legt es nicht selbst an.
+          BUILD_DIR="$PWD/godot/build"
+          mkdir -p "$BUILD_DIR"
+          echo "Ausgabeverzeichnis: $BUILD_DIR"
+          # Die Ausgabe wird gespiegelt: Fehlermeldungen des Exporters
+          # landen sonst nur im (nicht abrufbaren) Job-Log.
+          "$HOME/godot-bin/godot" --headless --path godot \
+            --export-release "Windows Desktop" "$BUILD_DIR/BwlSlayer.exe" 2>&1 \
+            | tee godot/export.log
+          CODE="${PIPESTATUS[0]}"
+          cat godot/export.log
+          if [ "$CODE" -ne 0 ]; then
+            echo "FEHLER: Windows-Export fehlgeschlagen (Exit $CODE)" >&2
+            exit "$CODE"
+          fi
+          ls -la godot/build/
+
+      - name: Portable-Version paketieren
+        run: |
+          set -euo pipefail
+          cd godot/build
+          zip -r BwlSlayer-windows-x64-portable.zip BwlSlayer.exe BwlSlayer.pck 2>/dev/null || zip -r BwlSlayer-windows-x64-portable.zip .
+          ls -la
+
+      - name: Diagnose schreiben
+        if: failure()
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p ci-diagnostics
+          {
+            echo "# CI-Diagnose (Export)"
+            echo ""
+            echo "## Export-Protokoll"
+            echo '```'
+            cat godot/export.log 2>/dev/null || echo "(keine Datei)"
+            echo '```'
+          } > ci-diagnostics/export-run.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-diagnostics/export-run.md
+          git commit -m "CI: Diagnose des Exportlaufs" || echo "Keine Aenderung."
+          git push --force origin HEAD:refs/heads/ci-diagnostics || echo "Push nicht moeglich."
+
+      - name: Build-Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: BwlSlayer-windows-x64
+          path: |
+            godot/build/BwlSlayer.exe
+            godot/build/BwlSlayer.pck
+            godot/build/BwlSlayer-windows-x64-portable.zip
+          if-no-files-found: error
+
+  # ==========================================================
+  # 3 · Release (nur bei Tag, nach bestandenen Tests)
+  # ==========================================================
+  release:
+    name: GitHub Release
+    needs: [test, export]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Release erstellen
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            godot/build/BwlSlayer-windows-x64-portable.zip
+          generate_release_notes: true
+          body: |
+            ## BWL Slayer · Windows-Desktop-Build
+
+            Version aus `.godot-version`: `${{ env.GODOT_VERSION }}`
+
+            **Laden:** `BwlSlayer-windows-x64-portable.zip` entpacken und
+            `BwlSlayer.exe` starten.
+
+            ### Build-Herkunft
+            - Pipeline: `.github/workflows/godot-build.yml`
+            - Tests müssen vor dem Export bestanden sein (`test`-Job vor `export`-Job)
+            - Export-Templates identisch zur Editor-Version
+
+            ### Visuelle Abnahme
+            Automatisierte Tests decken Wirtschaftslogik, Engine-Werte,
+            Import und Speicheroperationen ab. Die visuelle Abnahme
+            (Isometrie, Kamera, Animationen, Bedienung auf echter
+            Windows-Hardware mit verschiedenen DPI-Skalierungen) erfolgt
+            manuell - siehe `docs/TESTING.md`.
