@@ -98,6 +98,18 @@ func _ready() -> void:
 
 
 ## Öffnet eine Welt.
+## Oeffnet den Betriebs-Lab ohne eine Lernwelt.
+##
+## Der Betriebs-Lab rechnet mit den echten Zahlen des Betriebs. Er
+## steht jedem offen – der Lernfortschritt spielt keine Rolle.
+func open_company_lab() -> void:
+	world_id = ""
+	world = null
+	stage_index = 0
+	_show_company_lab = true
+	_render()
+
+
 func open_world(p_world_id: String, p_stage: int = 0) -> void:
 	world_id = p_world_id
 	world = LearningContent.get_world(p_world_id)
@@ -118,6 +130,14 @@ func _render() -> void:
 		child.queue_free()
 	_answer_inputs.clear()
 	_status.text = ""
+
+	if world == null:
+		# Der Betriebs-Lab: keine Welt, kein Reiter, nur die Aufgaben
+		# aus dem Betrieb.
+		_title.text = "Betriebs-Lab"
+		_subtitle.text = "Aufgaben aus den echten Zahlen deines Betriebs"
+		_render_company_lab()
+		return
 
 	var titles := world.get_stage_titles()
 	_title.text = "%s %s" % [world.icon, world.title]

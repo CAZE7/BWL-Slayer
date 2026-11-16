@@ -1379,6 +1379,39 @@ func _fill_learning(box: VBoxContainer) -> void:
 		detail.custom_minimum_size = Vector2(0, 18)
 		box.add_child(detail)
 
+	# Der Betriebs-Lab: Aufgaben aus den echten Zahlen des Betriebs.
+	# Er steht jedem offen – der Lernfortschritt spielt keine Rolle.
+	_add_section(box, "BETRIEBS-LAB")
+	var company_button := Button.new()
+	company_button.text = "Aufgaben aus meinem Betrieb"
+	company_button.custom_minimum_size = Vector2(0, 32)
+	company_button.tooltip_text = (
+		"Rechne mit deinem Umsatz, deinen Fixkosten, deinem "
+		+ "Kapitalbedarf und deiner Materialreichweite."
+	)
+	company_button.pressed.connect(_open_company_lab)
+	box.add_child(company_button)
+
+	var company_detail := Label.new()
+	company_detail.text = "%d Aufgaben gelöst" % GameState.progress.company_tasks_solved()
+	company_detail.add_theme_font_size_override("font_size", 11)
+	company_detail.add_theme_color_override("font_color", UI["text_faint"])
+	box.add_child(company_detail)
+
+
+## Oeffnet den Betriebs-Lab: Aufgaben aus den echten Betriebsdaten.
+##
+## Der Betriebs-Lab steht jedem offen – er richtet sich nicht nach
+## dem Lernfortschritt, sondern nach der eigenen Firma.
+func _open_company_lab() -> void:
+	var overlay := get_tree().root.get_node_or_null("LearningOverlay")
+	if overlay != null:
+		overlay.queue_free()
+	overlay = LearningOverlay.new()
+	overlay.name = "LearningOverlay"
+	get_tree().root.add_child(overlay)
+	overlay.open_company_lab()
+
 
 func _open_world(world_id: String) -> void:
 	# Der Welt-Bereich ist ein Overlay im Lernlabor.
