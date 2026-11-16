@@ -242,6 +242,7 @@ func analyze() -> Dictionary:
 	findings.append_array(_analyze_financing(sim))
 	findings.append_array(_analyze_material_supply(sim))
 	findings.append_array(_analyze_contracts(sim))
+	findings.append_array(_analyze_next_steps(sim, machines))
 
 	current_analysis = {
 		"day": sim.day,
