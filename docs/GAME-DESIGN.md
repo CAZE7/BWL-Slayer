@@ -324,6 +324,34 @@ Betrieb), **Fragen** (die zum Nachdenken führen), **Lektion** (die
 fachliche Größe), **Aktion** (wo es weitergeht). Der Berater gibt
 **niemals** eine fertige Lösung.
 
+## Der Betriebs-Lab
+
+Das BWL-Labor der Lernwelten arbeitet mit festen Beispielwerten aus
+dem geschützten Lerninhalt. Der **Betriebs-Lab** schließt die Brücke
+zwischen Lernen und Spiel: Seine Aufgaben entstehen aus den **echten
+Zahlen** des laufenden Betriebs.
+
+| Aufgabe | Rechnet mit |
+|---|---|
+| Deckungsbeitrag | Preis, variable Kosten, Produktion des Spielers |
+| Break-even | Fixkosten und Deckungsbeitrag des Spielers |
+| Kostenfunktion | Fixkostenblock und Gesamtmenge des Spielers |
+| Betriebsergebnis | GuV des Spielers |
+| Eigenkapitalrendite | Ergebnis und Eigenkapital des Spielers |
+| Bilanz | Aktiva und Passiva des Spielers |
+| Kapitalbedarf | Kapitalbindungsdauer und Tageskosten des Spielers |
+| Materialreichweite | Bestand und Tagesbedarf des Spielers |
+
+Die Lösung wird aus derselben Quelle berechnet wie die Aufgabe. Sie
+ist damit immer richtig und passt zum Spielstand.
+
+Der Betriebs-Lab ist ein eigener Reiter im Lernbereich und immer
+zugänglich: Er richtet sich nicht nach dem Lernfortschritt, sondern
+nach der eigenen Firma. Die Welten erklären die Konzepte, der
+Betriebs-Lab wendet sie an.
+
+Der geschützte Lerninhalt bleibt unverändert.
+
 ## Lernstufen
 
 Drei Stufen je Welt:
