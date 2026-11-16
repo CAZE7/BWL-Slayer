@@ -246,6 +246,32 @@ Gleiche variable Stückkosten ⇒ keine kritische Menge. Dann ist die
 Fixkostenhöhe die entscheidende Größe, und genau das steht in der
 Empfehlung.
 
+## Rahmenverträge
+
+Die Nachfrage kommt aus dem Markt und schwankt. Mit einem
+**Rahmenvertrag** bindet der Spieler sie selbst:
+
+| Merkmal | Wirkung |
+|---|---|
+| Mindestmenge p.a. | gesicherte Nachfrage, planbare Kapazitätsauslastung |
+| fester Preis | Preisbindung über die Laufzeit |
+| Laufzeit | wird im Jahresabschluss um ein Jahr verringert |
+| Kündigung | 10 % des Jahresumsatzes als Gebühr |
+
+Zwei Bedingungen muss ein Vertrag erfüllen:
+
+- Der **Preis liegt über dem Deckungsbeitrag**. Sonst wäre jeder
+  Stück ein Verlust.
+- Die **Menge passt zur Kapazität**. Eine Menge über der Kapazität
+  wäre von Anfang an unerfüllbar.
+
+Die vertragliche Menge wird in der Nachfrage **zusätzlich** zum
+schwankenden Marktanteil angeboten — sonst wäre der Vertrag wertlos.
+
+Der Berater warnt, wenn fast die gesamte Kapazität gebunden ist: Ein
+Vertrag macht Nachfrage planbar, bindet aber Kapazität zu einem
+festen Preis.
+
 ## Finanzierung
 
 Fremdkapital ist eine Entscheidung mit echten Folgen, nicht eine
@@ -286,6 +312,7 @@ Module:
 | verlorene Aufträge | Nachfrage, die nicht bedient werden konnte |
 | Finanzierung | zu hohe Verschuldung, Zinsbelastung, ungenutzter Kreditrahmen |
 | Materialversorgung | je Materialart: Bestand reicht nicht bis zur nächsten Lieferung |
+| Rahmenverträge | zu hohe Kapazitätsbindung, Vertrag unter dem Deckungsbeitrag |
 
 Zusätzlich reagiert der Berater auf **Spielereignisse**: neuer
 Kundenauftrag, installierte Maschine, abgeschlossener Auftrag,
