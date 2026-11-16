@@ -150,6 +150,27 @@ berechnet und ist damit immer richtig.
 Damit ist die Brücke zwischen Lernen und Spiel geschlossen: Die
 Welten erklären die Konzepte, der Betriebs-Lab rechnet damit.
 
+### Betriebs-CI: belastbare Diagnose  ✅
+
+Ein roter Lauf muss eindeutig interpretierbar sein. Zwei Fehlerquellen
+wurden beseitigt:
+
+* **Veraltete Diagnose.** Die Diagnose-Datei wurde nur bei `failure()`
+  geschrieben. Nach einem grünen Lauf blieb ein alter Log stehen, der
+  beim nächsten roten Lauf als aktueller Zustand gelesen wurde. Sie
+  entsteht jetzt bei **jedem** Lauf (`if: always()`).
+* **Drosselung beim Download.** Der Godot-Download lief über `curl` ohne
+  wirksames Backoff. Bei HTTP 429/5xx der GitHub-API brach der
+  Export ab – ohne jeden Fehler im Quellcode. `tools/download_asset.py`
+  löst die Asset-ID auf und lädt das Archiv mit wachsender Wartezeit;
+  der Workflow cacht zusätzlich beide Archive.
+
+Der Testlauf schreibt Prozessausgabe und Framework-Log **getrennt**
+(`test-stdout.log`, `test-framework.log`). Die Prozessausgabe enthält
+die `RUN-TESTS:`-Zeilen und GDScript-Laufzeitfehler; das Framework-Log
+die Prüfungszeilen. Bei einem Abbruch waren beide nötig, um die
+Abbruchstelle zu finden.
+
 ### Phase 7 — Reife & Qualität  ⬜
 
 - Balancing, Wirtschaftstests über lange Zeiträume
@@ -168,6 +189,7 @@ Welten erklären die Konzepte, der Betriebs-Lab rechnet damit.
 | 3D wirkt billig | Design-Scheitern | Wenige, hochwertige prozedurale Assets statt vieler schwacher |
 | Content-Sidecar veraltet | Lerninhalte gehen verloren | Wird in CI immer frisch generiert |
 | CI-Runner schlägt fehl | Kein Windows-Build | Versions-Pinning + Retry + Artefakt-Sicherung |
+| GitHub-API drosselt den Asset-Download | Export schlägt ohne Code-Fehler fehl | `tools/download_asset.py` mit Backoff (HTTP 403/408/429/5xx) + Asset-Cache im Workflow |
 
 ## 4. Definition of Done
 
