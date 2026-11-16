@@ -223,6 +223,28 @@ func mark_concept_solved(world_id: String, stage: int, part: int) -> bool:
 	return mark_task_solved(concept_key(world_id, stage, part), true)
 
 
+## Markiert eine Betriebsaufgabe als gelöst.
+##
+## Der Betriebs-Lab gehoert nicht zu einer Welt. Seine Aufgaben
+## werden ueber die ID markiert, damit sie nicht doppelt zaehlen.
+func mark_company_task_solved(task_id: String) -> bool:
+	return mark_task_solved("betrieb:%s" % task_id, true)
+
+
+## Ist eine Betriebsaufgabe bereits gelöst?
+func is_company_task_solved(task_id: String) -> bool:
+	return bool(solved_tasks.get("betrieb:%s" % task_id, false))
+
+
+## Wie viele Betriebsaufgaben wurden bereits geloest?
+func company_tasks_solved() -> int:
+	var count := 0
+	for key in solved_tasks:
+		if String(key).begins_with("betrieb:"):
+			count += 1
+	return count
+
+
 ## Sind alle Konzept-Teilaufgaben einer Stufe gelöst?
 func is_concept_stage_complete(world_id: String, stage: int, total_parts: int) -> bool:
 	if total_parts <= 0:

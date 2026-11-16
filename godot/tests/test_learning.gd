@@ -18,6 +18,8 @@ static func run(t: TestFramework) -> void:
 	_test_progress(t)
 	t.suite("Lernen · Teilaufgaben-Freischaltung")
 	_test_mastery_criteria(t)
+	t.suite("Lernen · Betriebs-Lab aus echten Daten")
+	_test_company_lab(t)
 
 
 # ------------------------------------------------------------------
@@ -268,3 +270,137 @@ static func _test_progress(t: TestFramework) -> void:
 	var restored := PlayerProgress.from_dict(data)
 	t.check_approx("Roundtrip XP", restored.xp, progress.xp, 0.01)
 	t.check_true("Roundtrip Weltenfortschritt", restored.is_stage_done("W1", 2))
+
+
+# ------------------------------------------------------------------
+# Der Betriebs-Lab erzeugt Aufgaben aus den echten Zahlen des
+# laufenden Betriebs. Die Loesung muss zur Aufgabe passen – sonst
+# waere der Spieler auf eine falsche Antwort angewiesen.
+# ------------------------------------------------------------------
+static func _test_company_lab(t: TestFramework) -> void:
+	var spec := MachineSpec.new()
+	spec.id = &"LAB"
+	spec.display_name = "Laboranlage"
+	spec.acquisition_cost = 10_000.0
+	spec.residual_value = 0.0
+	spec.useful_life_years = 5
+	spec.imputed_interest_rate = 0.08
+	spec.fixed_operating_costs = 2_000.0
+	spec.variable_cost_per_unit = 10.0
+	spec.price_per_unit = 30.0
+	spec.capacity_units_per_year = 5_000.0
+	spec.material_per_unit = 1.0
+	spec.material_price_per_kg = 2.0
+	spec.material_type = MachineCatalog.MATERIAL_STEEL
+
+	var sim := SimulationEngine.new()
+	sim.specs[spec.id] = spec
+
+	# Ohne Anlage gibt es keine Aufgaben.
+	t.check_true(
+		"Ohne Betrieb keine Betriebsaufgaben",
+		CompanyLab.build_tasks(sim).is_empty()
+	)
+
+	var m := MachineInstance.new(spec, "lab-1")
+	m.state = MachineInstance.State.ACTIVE
+	m.commissioned_year = 1
+	sim.machines["lab-1"] = m
+	m.quantity_this_year = 1_000.0
+
+	# Der Snapshot liest die echten Werte.
+	var snap := CompanyLab.snapshot(sim)
+	t.check_approx("Kapazitaet korrekt", snap.capacity, 5_000.0, 0.01)
+	t.check_approx("Menge korrekt", snap.quantity, 1_000.0, 0.01)
+	t.check_approx(
+		"Preis je Stueck korrekt", snap.price_per_unit, 30.0, 0.01
+	)
+	t.check_approx(
+		"Variable Kosten je Stueck korrekt",
+		snap.variable_cost_per_unit,
+		12.0,
+		0.01
+	)
+	t.check_approx(
+		"Deckungsbeitrag je Stueck korrekt",
+		snap.contribution_per_unit,
+		18.0,
+		0.01
+	)
+
+	# Es werden Aufgaben erzeugt.
+	var tasks := CompanyLab.build_tasks(sim)
+	t.check_true("Betriebsaufgaben erzeugt", tasks.size() >= 6)
+
+	# Jede Aufgabe hat Felder und eine Loesung.
+	for task in tasks:
+		t.check_true("Aufgabe '%s' hat Felder" % task.id, not task.fields.is_empty())
+		t.check_true("Aufgabe '%s' hat eine Loesung" % task.id, task.solution != "")
+		t.check_true("Aufgabe '%s' hat einen Hinweis" % task.id, task.hint != "")
+
+	# Die Deckungsbeitragsaufgabe muss exakt zur Simulation passen.
+	var found := false
+	for task in tasks:
+		if task.id != "betrieb-deckungsbeitrag":
+			continue
+		found = true
+		for field in task.fields:
+			if field.key == "db":
+				t.check_approx(
+					"Deckungsbeitrag der Aufgabe stimmt",
+					field.ans,
+					18.0,
+					0.05
+				)
+			if field.key == "dbt":
+				t.check_approx(
+					"Gesamter Deckungsbeitrag der Aufgabe stimmt",
+					field.ans,
+					18_000.0,
+					1.0
+				)
+	t.check_true("Deckungsbeitragsaufgabe vorhanden", found)
+
+	# Die Break-even-Aufgabe muss zur Simulation passen.
+	found = false
+	for task in tasks:
+		if task.id != "betrieb-break-even":
+			continue
+		found = true
+		for field in task.fields:
+			if field.key == "be":
+				# Fixkosten 2.000 / DB 18 = 111,11 Stueck
+				t.check_approx(
+					"Break-even der Aufgabe stimmt",
+					field.ans,
+					2_000.0 / 18.0,
+					1.0
+				)
+	t.check_true("Break-even-Aufgabe vorhanden", found)
+
+	# Die Bilanzaufgabe muss aufgehen: Aktiva gleich Passiva.
+	sim.economy.cash = 20_000.0
+	sim.economy.equity = 20_000.0
+	found = false
+	for task in tasks:
+		if task.id != "betrieb-bilanz":
+			continue
+		found = true
+		var aktiva := 0.0
+		var passiva := 0.0
+		for field in task.fields:
+			if field.key == "aktiva":
+				aktiva = field.ans
+			if field.key == "passiva":
+				passiva = field.ans
+		t.check_approx("Bilanz der Aufgabe geht auf", aktiva - passiva, 0.0, 0.01)
+	t.check_true("Bilanzaufgabe vorhanden", found)
+
+	# Der Fortschritt wird gespeichert.
+	var progress := PlayerProgress.new()
+	t.check_true("Aufgabe zuerst ungeloest", not progress.is_company_task_solved("x"))
+	progress.mark_company_task_solved("x")
+	t.check_true("Aufgabe nach dem Markieren geloest", progress.is_company_task_solved("x"))
+	t.check_approx(
+		"Zaehloest", float(progress.company_tasks_solved()), 1.0, 0.01
+	)

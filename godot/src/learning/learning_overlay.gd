@@ -37,6 +37,8 @@ var stage_index: int = 0
 var trainer: EndlessTrainer
 var trainer_task: Dictionary = {}
 var trainer_streak: int = 0
+## Zeigt derzeit der Betriebs-Lab statt der Stufe?
+var _show_company_lab: bool = false
 
 var _panel: PanelContainer
 var _title: Label
@@ -134,7 +136,21 @@ func _render() -> void:
 		button.disabled = i > 0 and not GameState.progress.is_stage_done(world.id, i - 1)
 		button.pressed.connect(func(): _set_stage(i))
 		stage_row.add_child(button)
+
+	# Der Betriebs-Lab: Aufgaben aus den echten Zahlen des
+	# laufenden Betriebs. Er ist immer zugaenglich – er richtet sich
+	# nicht nach dem Lernfortschritt, sondern nach der eigenen Firma.
+	var company_button := Button.new()
+	company_button.name = "CompanyLab"
+	company_button.text = "Betriebs-Lab"
+	company_button.custom_minimum_size = Vector2(0, 30)
+	company_button.pressed.connect(func(): _set_company_lab())
+	stage_row.add_child(company_button)
 	_content.add_child(stage_row)
+
+	if _show_company_lab:
+		_render_company_lab()
+		return
 
 	match stage_index:
 		0: _render_concept()
@@ -156,6 +172,18 @@ func _update_stage_buttons() -> void:
 
 func _set_stage(index: int) -> void:
 	stage_index = index
+	trainer_streak = 0
+	_show_company_lab = false
+	_render()
+
+
+## Zeigt den Betriebs-Lab: Aufgaben aus den echten Betriebsdaten.
+##
+## Der Betriebs-Lab ist von der Welt unabhaengig – er zeigt die
+## Kennzahlen des Spielers. Er wird deshalb ueber einen eigenen
+## Schalter ein- und ausgeblendet, nicht ueber die Stufen.
+func _set_company_lab() -> void:
+	_show_company_lab = not _show_company_lab
 	trainer_streak = 0
 	_render()
 
@@ -705,6 +733,118 @@ func _on_check_order(item: ConceptItem, sequence: Array) -> void:
 # erste Aufgabe sichtbar – der Rest der Originalaufgaben (der
 # geschuetzte Lerninhalt) war damit unerreichbar.
 # ------------------------------------------------------------------
+## Der Betriebs-Lab: BWL-Aufgaben mit den echten Zahlen der Firma.
+##
+## Die Aufgaben entstehen aus dem laufenden Betrieb: Umsatz,
+## Fixkosten, Kapitalbedarf, Materialreichweite. Die Loesung wird
+## aus derselben Quelle berechnet – sie ist damit immer richtig.
+func _render_company_lab() -> void:
+	_content.add_child(_heading("Betriebs-Lab"))
+	_content.add_child(_muted(
+		"Diese Aufgaben entstehen aus den echten Zahlen deines Betriebs. "
+		+ "Du rechnest mit deiner eigenen Firma."
+	))
+
+	var tasks := CompanyLab.build_tasks(Simulation)
+	if tasks.is_empty():
+		_content.add_child(_muted(
+			"Keine Betriebsdaten vorhanden. Starte eine Anlage, dann "
+			+ "entstehen hier Aufgaben."
+		))
+		return
+
+	var index := 0
+	for task in tasks:
+		index += 1
+		if index > 1:
+			var sep := HSeparator.new()
+			sep.custom_minimum_size = Vector2(0, 12)
+			_content.add_child(sep)
+		_render_company_task(task, index)
+
+
+## Eine Betriebsaufgabe mit Eingabefeldern und Pruefung.
+func _render_company_task(task: CompanyLab.Task, index: int) -> void:
+	var heading := Label.new()
+	heading.text = "%d · %s" % [index, task.topic]
+	heading.add_theme_font_size_override("font_size", 13)
+	heading.add_theme_color_override("font_color", UI["text"])
+	_content.add_child(heading)
+
+	var prompt := Label.new()
+	prompt.text = task.prompt
+	prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	prompt.add_theme_font_size_override("font_size", 13)
+	_content.add_child(prompt)
+
+	if task.given != "":
+		var given := Label.new()
+		given.text = "Formel: %s" % task.given
+		given.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		given.add_theme_font_size_override("font_size", 11)
+		given.add_theme_color_override("font_color", UI["text_muted"])
+		_content.add_child(given)
+
+	# Die Eingabefelder. Die Loesungswerte und Toleranzen werden
+	# hier als einfache Zahlen gespeichert, damit die Pruefung
+	# ohne Typumwege auskommt.
+	var inputs: Array = []
+	for field in task.fields:
+		var row := HBoxContainer.new()
+		var label := Label.new()
+		label.text = field.label
+		label.custom_minimum_size = Vector2(240, 0)
+		label.add_theme_font_size_override("font_size", 13)
+		row.add_child(label)
+
+		var input := LineEdit.new()
+		input.custom_minimum_size = Vector2(160, 0)
+		input.placeholder_text = "Wert"
+		row.add_child(input)
+		_content.add_child(row)
+		inputs.append({
+			"answer": float(field.ans),
+			"tolerance": float(field.tol),
+			"input": input,
+		})
+
+	# Der Knopf prueft alle Felder together.
+	var result_label := Label.new()
+	result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	result_label.add_theme_font_size_override("font_size", 12)
+	_content.add_child(result_label)
+
+	var check_button := Button.new()
+	check_button.text = "Prüfen"
+	check_button.custom_minimum_size = Vector2(0, 30)
+	check_button.pressed.connect(func():
+		var all_correct := true
+		for entry in inputs:
+			var answer := float(entry.get("answer", 0.0))
+			var tolerance := float(entry.get("tolerance", 0.01))
+			var input := entry.get("input") as LineEdit
+			if input == null:
+				all_correct = false
+				continue
+			var raw := input.text.strip_edges().replace(",", ".")
+			if raw == "" or not raw.is_valid_float():
+				all_correct = false
+				continue
+			if absf(float(raw) - answer) > tolerance:
+				all_correct = false
+		if all_correct:
+			result_label.text = task.solution
+			result_label.add_theme_color_override("font_color", UI["positive"])
+			GameState.progress.mark_company_task_solved(task.id)
+		else:
+			result_label.text = (
+				"Noch nicht richtig. %s" % task.hint
+			)
+			result_label.add_theme_color_override("font_color", UI["warning"])
+	)
+	_content.add_child(check_button)
+
+
 func _render_lab() -> void:
 	var tasks := world.lab_tasks
 	if tasks.is_empty():
