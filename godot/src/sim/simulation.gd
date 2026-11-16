@@ -101,6 +101,25 @@ func _ready() -> void:
 	# kann.
 	_start_initial_machine()
 
+	_show_intro()
+
+
+## Zeigt die Einstiegsnachricht.
+##
+## Sie nennt die Reihenfolge der ersten Schritte, loest aber keine
+## Aufgabe. Sie erscheint beim Start und bei einem neuen Spiel – nicht
+## beim Laden eines Spielstands.
+func _show_intro() -> void:
+	EventBus.notify(
+		"Willkommen im Werk",
+		"Anlage A läuft und produziert. Kundenaufträge kommen von "
+		+ "selbst – sie verbrauchen deine Kapazität. Prüfe im "
+		+ "Investitionsmodul, ab welcher Menge die größere Anlage B "
+		+ "günstiger wird, und entscheide danach über einen "
+		+ "Rahmenvertrag.",
+		"info"
+	)
+
 
 ## Richtet den Startbetrieb ein: eine Anlage A steht bereits im Betrieb.
 func _start_initial_machine() -> void:
@@ -154,6 +173,7 @@ func reset() -> void:
 	running = false
 	speed_index = 0
 	_start_initial_machine()
+	_show_intro()
 	EventBus.simulation_speed_changed.emit(speed_index)
 	EventBus.economy_changed.emit(economy.to_dict())
 
