@@ -125,14 +125,30 @@ Jedes BWL-Fachthema wird zum betriebswirtschaftlichen Problem:
 
 | Thema | Umsetzung im Spiel | Stand |
 |---|---|---|
-| Kostenvergleich | Maschinenentscheidung mit x_krit | ✅ |
-| Break-even | Deckungsbeitrag vs. Fixkosten | ✅ |
+| Kostenvergleich | Maschinenentscheidung mit x_krit, Gegenprobe an den Kurven | ✅ |
+| Break-even | Deckungsbeitrag vs. Fixkosten, im Betriebs-Lab | ✅ |
 | Amortisation | Investitionsfortschritt im Betrieb | ✅ |
-| Kapitalwert | Investitionsentscheidung mit Barwert | ⬜ |
-| Liquidität | Laufende Kassenposition, Krisen | ✅ |
-| Leverage | Kreditaufnahme, EK-Rentabilität | ✅ |
-| Du-Pont | Kennzahlendashboard | ⬜ |
+| Kapitalwert | Investitionsentscheidung mit Barwert, Kapitalwert, PI, IRR | ✅ |
+| Liquidität | Laufende Kassenposition, Krisen, Ereigniskette | ✅ |
+| Leverage | Kreditrahmen, Bonitätszins, Tilgungsentscheidung | ✅ |
+| Du-Pont | Kennzahlendashboard | ✅ |
+| Kapitalbindungsdauer | Kapitalbedarf aus Vorlauf, Produktion und Zahlungsziel | ✅ |
+| Materialwirtschaft | getrennte Materialarten, Vorlauf, Reichweite | ✅ |
+| Rahmenverträge | gesicherte Nachfrage mit Preisbindung | ✅ |
 | Bezugsrecht | Kapitalerhöhung als Finanzierungsoption | ⬜ |
+
+### Betriebs-Lab
+
+Das BWL-Labor der Lernwelten arbeitet mit festen Beispielwerten aus
+dem geschützten Lerninhalt. Der **Betriebs-Lab** wendet dieselben
+Konzepte auf die **echten Zahlen** des Spielbetriebs an: Deckungs-
+beitrag, Break-even, Kostenfunktion, Betriebsergebnis, Eigenkapital-
+rendite, Bilanz, Kapitalbedarf und Materialreichweite werden aus der
+laufenden Simulation erzeugt. Die Lösung wird aus derselben Quelle
+berechnet und ist damit immer richtig.
+
+Damit ist die Brücke zwischen Lernen und Spiel geschlossen: Die
+Welten erklären die Konzepte, der Betriebs-Lab rechnet damit.
 
 ### Phase 7 — Reife & Qualität  ⬜
 
@@ -157,11 +173,12 @@ Jedes BWL-Fachthema wird zum betriebswirtschaftlichen Problem:
 
 1. ✅ Windows-Anwendung installierbar bzw. als portable Version startbar
 2. ✅ Kein Browser nötig
-3. ⬜ Alle Kernfunktionen spielbar
+3. ✅ Alle Kernfunktionen spielbar
 4. ⬜ Einheitlicher professioneller Eindruck
-5. ⬜ Nachvollziehbare Progression durch Unternehmensentwicklung
+5. ✅ Nachvollziehbare Progression durch Unternehmensentwicklung
 6. ✅ Spielstände überstehen Neustarts
 7. ✅ Fachliche Berechnungen korrekt (Paritätstest)
-8. ⬜ Spielmechaniken automatisiert getestet
+8. ✅ Spielmechaniken automatisiert getestet
 9. ⬜ Funktioniert auf verschiedenen Auflösungen
-10. ⬜ Windows-Release mit nachvollziehbarem Build-Prozess
+10. ✅ Windows-Build mit nachvollziehbarem Prozess (Release folgt
+    nach der visuellen Abnahme)
