@@ -34,6 +34,8 @@ static func run(t: TestFramework) -> void:
 	_test_material_logistics(t)
 	t.suite("Ablauf · Getrennte Materialarten")
 	_test_material_types(t)
+	t.suite("Ablauf · Rahmenverträge")
+	_test_contracts(t)
 
 
 # ------------------------------------------------------------------
@@ -949,5 +951,99 @@ static func _test_material_types(t: TestFramework) -> void:
 		"Verpackungsbestand im Spielstand",
 		restored.material_stock(MachineCatalog.MATERIAL_PACKAGING),
 		sim.material_stock(MachineCatalog.MATERIAL_PACKAGING),
+		0.01
+	)
+
+
+# ------------------------------------------------------------------
+# Rahmenvertraege sichern Nachfrage - aber nur zu einem Preis, der
+# den Deckungsbeitrag deckt. Ein Vertrag unter dem Deckungsbeitrag
+# waere ein Verlust auf jedem Stueck und wird abgelehnt.
+# ------------------------------------------------------------------
+static func _test_contracts(t: TestFramework) -> void:
+	var spec := _make_spec(&"VERTR", 1000.0, 1000.0, 20.0, 60.0, 10000.0)
+	var sim := SimulationEngine.new()
+	sim.specs[spec.id] = spec
+
+	var m := MachineInstance.new(spec, "vertr-1")
+	m.state = MachineInstance.State.ACTIVE
+	m.commissioned_year = 1
+	sim.machines["vertr-1"] = m
+
+	# Der Deckungsbeitrag ist 60 - 20 = 40 EUR je Stueck.
+	t.check_approx(
+		"Deckungsbeitrag korrekt", sim._weighted_contribution_margin(), 40.0, 0.01
+	)
+
+	# Ein Preis unter dem Deckungsbeitrag wird abgelehnt.
+	var too_low := sim.sign_contract(1_000.0, 30.0, 3)
+	t.check_true("Preis unter Deckungsbeitrag abgelehnt", not bool(too_low.get("ok", false)))
+	t.check_true("Kein Vertrag angelegt", sim.contracts.is_empty())
+
+	# Eine Menge ueber der Kapazitaet wird abgelehnt.
+	var too_much := sim.sign_contract(1_000_000.0, 50.0, 3)
+	t.check_true("Ueberkapazitaet abgelehnt", not bool(too_much.get("ok", false)))
+
+	# Ein gueltiger Vertrag wird geschlossen.
+	var contract := sim.sign_contract(3_000.0, 50.0, 3)
+	t.check_true("Vertrag geschlossen", bool(contract.get("ok", false)))
+	t.check_true("Vertrag in der Liste", sim.contracts.size() == 1)
+	t.check_approx(
+		"Gesicherte Menge korrekt", sim.contracted_quantity(), 3_000.0, 0.01
+	)
+	t.check_approx(
+		"Gesicherter Deckungsbeitrag korrekt",
+		sim.contracted_margin(),
+		3_000.0 * 10.0,
+		0.01
+	)
+
+	# Die vertragliche Menge wird in der Nachfrage angeboten.
+	var capacity := sim._total_capacity()
+	var share := 0.6
+	var market_quantity: float = floor(capacity * share / 100.0) * 100.0
+	t.check_true(
+		"Vertragsmenge groesser als die Marktnachfrage",
+		sim.contracted_quantity() > 0.0
+	)
+
+	# Kuendigung kostet eine Gebuehr von 10 % des Jahresumsatzes.
+	var cash_before := sim.economy.cash
+	var termination := sim.terminate_contract(String(sim.contracts[0].get("id", "")))
+	t.check_true("Kuendigung moeglich", bool(termination.get("ok", false)))
+	t.check_approx(
+		"Kuendigungsgebuehr abgebucht",
+		sim.economy.cash,
+		cash_before - 3_000.0 * 50.0 * 0.10,
+		0.01
+	)
+	t.check_true("Vertrag entfernt", sim.contracts.is_empty())
+
+	# Die Laufzeit verringert sich im Jahresabschluss.
+	var contract2 := sim.sign_contract(1_000.0, 50.0, 2)
+	t.check_true("Zweiter Vertrag geschlossen", bool(contract2.get("ok", false)))
+	var years_before := int(sim.contracts[0].get("years_remaining", 0))
+	sim._close_business_year()
+	t.check_true(
+		"Laufzeit um ein Jahr verringert",
+		int(sim.contracts[0].get("years_remaining", 0)) == years_before - 1
+	)
+
+	# Nach zwei Jahren ist der Vertrag ausgelaufen.
+	sim._close_business_year()
+	t.check_true("Vertrag ausgelaufen", sim.contracts.is_empty())
+
+	# Der Spielstand muss die Vertraege behalten.
+	var sim2 := SimulationEngine.new()
+	sim2.specs[spec.id] = spec
+	sim2.sign_contract(500.0, 50.0, 5)
+	var restored := SimulationEngine.new()
+	restored.specs[spec.id] = spec
+	restored.from_dict(sim2.to_dict())
+	t.check_true("Vertrag im Spielstand", restored.contracts.size() == 1)
+	t.check_approx(
+		"Vertragsmenge im Spielstand",
+		restored.contracted_quantity(),
+		500.0,
 		0.01
 	)

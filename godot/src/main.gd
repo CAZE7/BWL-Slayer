@@ -1244,6 +1244,102 @@ func _fill_finance(box: VBoxContainer) -> void:
 	else:
 		box.add_child(_muted("Kein Kreditrahmen. Die Bank gewaehrt kein weiteres Fremdkapital."))
 
+	# --- Rahmenvertraege: planbare Nachfrage ----------------------
+	_add_section(box, "RAHMENVERTRÄGE")
+
+	if Simulation.contracts.is_empty():
+		box.add_child(_muted(
+			"Kein Vertrag. Die Nachfrage kommt aus dem Markt und schwankt. "
+			+ "Ein Rahmenvertrag sichert eine Mindestmenge zu festem Preis."
+		))
+	else:
+		for contract in Simulation.contracts:
+			var contract_box := VBoxContainer.new()
+			contract_box.add_theme_constant_override("separation", 2)
+
+			var head := Label.new()
+			head.text = String(contract.get("customer", "Vertrag"))
+			head.add_theme_font_size_override("font_size", 13)
+			contract_box.add_child(head)
+
+			var details := Label.new()
+			details.text = "%s Stück p.a. zu %s € · Restlaufzeit %d Jahre" % [
+				BWLEngine.format_eur(float(contract.get("quantity_per_year", 0.0)), 0),
+				BWLEngine.format_eur(float(contract.get("price_per_unit", 0.0)), 2),
+				int(contract.get("years_remaining", 0)),
+			]
+			details.add_theme_font_size_override("font_size", 11)
+			details.add_theme_color_override("font_color", UI["text_muted"])
+			contract_box.add_child(details)
+
+			var value := Label.new()
+			value.text = "Umsatz p.a. %s" % BWLEngine.format_eur(
+				float(contract.get("revenue_per_year", 0.0)), 0
+			)
+			value.add_theme_font_size_override("font_size", 11)
+			value.add_theme_color_override("font_color", UI["positive"])
+			contract_box.add_child(value)
+
+			var cancel := Button.new()
+			cancel.text = "Kündigen (Gebühr %s)" % BWLEngine.format_eur(
+				float(contract.get("revenue_per_year", 0.0)) * 0.10, 0
+			)
+			cancel.custom_minimum_size = Vector2(0, 28)
+			cancel.pressed.connect(func():
+				var result := Simulation.terminate_contract(String(contract.get("id", "")))
+				if not bool(result.get("ok", false)):
+					EventBus.notify(
+						"Kündigung nicht moeglich",
+						String(result.get("error", "Die Kuendigung wurde abgelehnt.")),
+						"warning"
+					)
+				_refresh_sidebar()
+			)
+			contract_box.add_child(cancel)
+			box.add_child(contract_box)
+
+		_add_metric(box, "Gesicherte Menge p.a.",
+			BWLEngine.format_eur(Simulation.contracted_quantity(), 0))
+		_add_metric(box, "Gesicherter Deckungsbeitrag p.a.",
+			BWLEngine.format_eur(Simulation.contracted_margin(), 0))
+
+	# Ein neuer Vertrag braucht eine Anlage als Bezug.
+	var running: Array[MachineInstance] = Simulation.active_machines()
+	if not running.is_empty():
+		# Kapazitaetsgewichteter Deckungsbeitrag als Preisuntergrenze.
+		var total_capacity := 0.0
+		var weighted_total := 0.0
+		for m in running:
+			var cap := m.spec.capacity_units_per_year
+			total_capacity += cap
+			weighted_total += m.spec.contribution_margin_per_unit() * cap
+		var db: float = weighted_total / total_capacity if total_capacity > 0.0 else 0.0
+
+		var contract_button := Button.new()
+		contract_button.text = "Vertrag: 30 %% der Kapazität, 3 Jahre"
+		contract_button.custom_minimum_size = Vector2(0, 30)
+		contract_button.tooltip_text = (
+			"Mindestmenge zu festem Preis. Der Preis muss über dem "
+			+ "Deckungsbeitrag von %s liegen." % BWLEngine.format_eur(db, 2)
+		)
+		contract_button.pressed.connect(func():
+			var capacity := 0.0
+			var machines: Array[MachineInstance] = Simulation.active_machines()
+			for m in machines:
+				capacity += m.spec.capacity_units_per_year
+			var result := Simulation.sign_contract(
+				capacity * 0.30, db * 1.10, 3
+			)
+			if not bool(result.get("ok", false)):
+				EventBus.notify(
+					"Vertrag nicht moeglich",
+					String(result.get("error", "Der Vertrag wurde abgelehnt.")),
+					"warning"
+				)
+			_refresh_sidebar()
+		)
+		box.add_child(contract_button)
+
 	# Die Tilgung kann auch manuell gesteuert werden.
 	if eco.debt > 0.0:
 		var repay_manual := Button.new()

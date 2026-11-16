@@ -45,6 +45,12 @@ var orders: Array = []              ## Kundenaufträge (offen)
 var completed_orders: Array = []    ## abgeschlossene Kundenaufträge
 var deliveries: Array = []          ## laufende Lieferungen
 var material_deliveries: Array = [] ## laufende Materiallieferungen
+## Rahmenverträge: langfristige Bindungen mit Kunden.
+##
+## Ein Rahmenvertrag sichert eine Mindestmenge zu einem festen Preis
+## ab. Das macht die Nachfrage planbar – aber der Preis liegt
+## fest. Wer zu billig verkauft, bindet Kapital auf Jahre.
+var contracts: Array = []
 var inventory_material: float = 0.0 ## kg Material im Lager (Sonderfall ohne Typ)
 ## Die Materialbestände je Materialart: material_type -> kg
 ##
@@ -129,6 +135,7 @@ func reset() -> void:
 	completed_orders.clear()
 	deliveries.clear()
 	material_deliveries.clear()
+	contracts.clear()
 	inventory_material = 0.0
 	material_inventory.clear()
 	economy = EconomyState.new()
@@ -371,6 +378,134 @@ func _revalue_inventory() -> void:
 		total += float(material_inventory[material_type]) * material_price(StringName(material_type))
 	total += inventory_material * _average_material_price()
 	economy.inventory_value = total
+
+
+## Schliesst einen Rahmenvertrag mit einem Kunden.
+##
+## Der Vertrag sichert eine Mindestmenge pro Jahr zu einem festen
+## Preis ab. Der Spieler bindet sich damit an die Nachfrage – aber
+## auch an den Preis. Ein Vertrag unter dem Deckungsbeitrag ist
+## ein Fehler, das wird abgelehnt.
+##
+## Die Dauer wird in Jahren angegeben.
+func sign_contract(
+	quantity_per_year: float, price_per_unit: float, years: int
+) -> Dictionary:
+	if quantity_per_year <= 0.0:
+		return {"ok": false, "error": "Die Mindestmenge muss positiv sein."}
+	if years <= 0:
+		return {"ok": false, "error": "Die Vertragsdauer muss mindestens ein Jahr betragen."}
+
+	# Der Preis muss mindestens den Deckungsbeitrag decken. Sonst
+	# verliert das Unternehmen an jedem Stueck Geld.
+	var db := _weighted_contribution_margin()
+	if db > 0.0 and price_per_unit < db:
+		return {
+			"ok": false,
+			"error": "Der Preis liegt unter dem Deckungsbeitrag von %s €. Das wäre ein Verlust auf jedem Stück." % _format_int(db),
+		}
+
+	# Der Vertrag darf nicht mehr versprechen als die Kapazitaet
+	# hergibt – sonst ist er von Anfang an unerfuellbar.
+	var capacity := _total_capacity()
+	if capacity > 0.0 and quantity_per_year > capacity * 1.5:
+		return {
+			"ok": false,
+			"error": "Die Mindestmenge von %s Stueck liegt ueber der Kapazitaet von %s Stueck." % [
+				_format_int(quantity_per_year), _format_int(capacity)
+			],
+		}
+
+	var contract := {
+		"id": "vertrag-%d" % day,
+		"customer": "Rahmenvertrag %d" % (1 + day % 5),
+		"quantity_per_year": quantity_per_year,
+		"price_per_unit": price_per_unit,
+		"years": years,
+		"years_remaining": years,
+		"signed_day": day,
+		"delivered_this_year": 0.0,
+		"revenue_per_year": quantity_per_year * price_per_unit,
+	}
+	contracts.append(contract)
+	EventBus.notify(
+		"Vertrag geschlossen",
+		"%s: %s Stueck p.a. zu %s €, Laufzeit %d Jahre." % [
+			contract["customer"],
+			_format_int(quantity_per_year),
+			_format_int(price_per_unit),
+			years,
+		],
+		"success"
+	)
+	return {"ok": true, "contract": contract}
+
+
+## Loest einen Rahmenvertrag auf.
+##
+## Eine Kuendigung vor Laufzeitende kostet eine Gebuehr. Das macht
+## die Entscheidung gegenlaeufig: Wer zu frueh kuendigt, zahlt.
+func terminate_contract(contract_id: String) -> Dictionary:
+	var contract: Dictionary = contracts.get(contract_id)
+	if contract == null:
+		return {"ok": false, "error": "Vertrag nicht gefunden."}
+
+	var fee: float = float(contract.get("revenue_per_year", 0.0)) * 0.10
+	if fee > 0.0 and economy.cash < fee:
+		return {
+			"ok": false,
+			"error": "Die Kuendigungsgebuehr von %s € kann nicht bezahlt werden." % _format_int(fee),
+		}
+	if fee > 0.0:
+		economy.move_cash(-fee)
+	contracts.erase(contract_id)
+	EventBus.notify(
+		"Vertrag gekuendigt",
+		"Die Kuendigungsgebuehr betraegt %s €." % _format_int(fee),
+		"warning"
+	)
+	return {"ok": true, "fee": fee}
+
+
+## Die Summe aller noch laufenden Vertragsmengen p.a.
+func contracted_quantity() -> float:
+	var total := 0.0
+	for contract in contracts:
+		total += float(contract.get("quantity_per_year", 0.0))
+	return total
+
+
+## Die gesicherte Nachfrage aus Verträgen (Deckungsbeitrag p.a.).
+func contracted_margin() -> float:
+	var total := 0.0
+	for contract in contracts:
+		total += float(contract.get("quantity_per_year", 0.0)) * (
+			float(contract.get("price_per_unit", 0.0)) - _weighted_contribution_margin()
+		)
+	return total
+
+
+## Die gesamte Kapazität der betriebsbereiten Anlagen.
+func _total_capacity() -> float:
+	var capacity := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		capacity += m.spec.capacity_units_per_year
+	return capacity
+
+
+## Der kapazitätsgewichtete Deckungsbeitrag je Stück.
+func _weighted_contribution_margin() -> float:
+	var capacity := 0.0
+	var weighted := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		var cap := m.spec.capacity_units_per_year
+		capacity += cap
+		weighted += m.spec.contribution_margin_per_unit() * cap
+	if capacity <= 0.0:
+		return 0.0
+	return weighted / capacity
 
 
 ## Schreibt die laufenden Materiallieferungen weiter.
@@ -765,6 +900,11 @@ func _generate_demand() -> void:
 	# Der Anteil schwankt deterministisch zwischen 40 % und 80 % der
 	# Kapazitaet. Die Schwankung folgt einer Sinusfunktion ueber die
 	# Jahrestage – glatt, nachvollziehbar, ohne Zufall.
+	#
+	# Rahmenvertraege sichern eine Mindestmenge zu einem festen
+	# Preis. Diese Menge wird zusaetzlich zum schwankenden Anteil
+	# angeboten – der Markt koennte die vertragliche Menge nicht
+	# abnehmen, sonst waere der Vertrag wertlos.
 	var phase := float(day % DAYS_PER_YEAR) / float(DAYS_PER_YEAR) * TAU
 	var swing := 0.6 + 0.2 * sin(phase)
 	var share := 0.40 + 0.40 * swing
@@ -773,6 +913,12 @@ func _generate_demand() -> void:
 	var quantity: float = floor(capacity * share / 100.0) * 100.0
 	if quantity <= 0.0:
 		quantity = 100.0
+
+	# Die vertraglich gesicherte Menge kommt hinzu. Sie wird zu
+	# festen Preisen angeboten, die gesichert sind.
+	var contracted := contracted_quantity()
+	if contracted > 0.0:
+		quantity += contracted
 
 	# Der Preis: Deckungsbeitrag plus Marge. Uebersteigt er den
 	# Deckungsbeitrag deutlich, ist der Auftrag nicht mehr sinnvoll.
@@ -969,6 +1115,28 @@ func _close_business_year() -> void:
 	economy.equity += economy.profit_current_year - economy.dividend_current_year
 	if economy.dividend_current_year > 0.0:
 		economy.dividends_paid += economy.dividend_current_year
+
+	# Rahmenvertraege: die Laufzeit verringert sich um ein Jahr.
+	for contract in contracts:
+		var remaining := int(contract.get("years_remaining", 0)) - 1
+		contract["years_remaining"] = maxi(0, remaining)
+		contract["delivered_this_year"] = 0.0
+		if remaining <= 0:
+			EventBus.notify(
+				"Vertrag ausgelaufen",
+				"%s ist nach %d Jahren ausgelaufen." % [
+					String(contract.get("customer", "Der Vertrag")),
+					int(contract.get("years", 0)),
+				],
+				"info"
+			)
+	# Ausgelaufene Vertraege entfernen.
+	var expired: Array = []
+	for contract in contracts:
+		if int(contract.get("years_remaining", 0)) <= 0:
+			expired.append(contract)
+	for contract in expired:
+		contracts.erase(contract)
 
 	# Jahreswerte zurücksetzen
 	economy.revenue_current_year = 0.0

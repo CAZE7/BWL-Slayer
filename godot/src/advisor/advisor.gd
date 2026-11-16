@@ -241,6 +241,7 @@ func analyze() -> Dictionary:
 	findings.append_array(_analyze_lost_orders(sim))
 	findings.append_array(_analyze_financing(sim))
 	findings.append_array(_analyze_material_supply(sim))
+	findings.append_array(_analyze_contracts(sim))
 
 	current_analysis = {
 		"day": sim.day,
@@ -521,6 +522,79 @@ func _analyze_material_type(
 			),
 			"action": "Prüfe die Materialbestände in der Produktionsansicht.",
 		})
+	return out
+
+
+## Rahmenvertraege: gebundene Nachfrage, aber auch gebundener Preis.
+##
+## Ein Vertrag sichert Menge, kostet aber Preisbindung. Der Berater
+## stellt die Frage, ob die Kapazitaet ohne den Vertrag besser
+## ausgelastet waere.
+func _analyze_contracts(sim: Node) -> Array:
+	var out: Array = []
+	var contracts: Array = sim.contracts
+	if contracts.is_empty():
+		return out
+
+	var contracted := sim.contracted_quantity()
+	var capacity: float = sim._total_capacity()
+	if capacity <= 0.0:
+		return out
+
+	var share := contracted / capacity
+	if share > 0.8:
+		out.append({
+			"id": "contracts_high_commitment",
+			"severity": "warning",
+			"title": "Fast die gesamte Kapazität ist vertraglich gebunden",
+			"analysis": (
+				"Die Verträge binden %s Stück p.a. Das ist %.0f %% deiner "
+				+ "Kapazität von %s Stück. Der Marktzusatz ist entsprechend "
+				+ "gering – und der Preis für die gebundene Menge ist fest."
+			) % [
+				_format_int(contracted),
+				share * 100.0,
+				_format_int(capacity),
+			],
+			"questions": [
+				"Wie viel Kapazität bleibt für die freie Nachfrage?",
+				"Was passiert, wenn der Vertragspartner weniger abnimmt?",
+			],
+			"lesson": (
+				"Ein Vertrag macht Nachfrage planbar, aber er bindet "
+				+ "Kapazität zu einem festen Preis. Das ist Fluch und "
+				+ "Segen zugleich."
+			),
+			"action": "Öffne den Finanzbereich und prüfe die Verträge.",
+		})
+
+	# Ein Vertrag unter dem Deckungsbeitrag waere ein Verlust.
+	var db: float = sim._weighted_contribution_margin()
+	for contract in contracts:
+		var price := float(contract.get("price_per_unit", 0.0))
+		if db > 0.0 and price < db:
+			out.append({
+				"id": "contract_loss_%s" % String(contract.get("id", "")),
+				"severity": "warning",
+				"title": "Vertrag unter dem Deckungsbeitrag",
+				"analysis": (
+					"Der Vertrag %s liefert %s € je Stück, der Deckungsbeitrag "
+					+ "beträgt aber nur %s €. Jedes Stück verliert damit Geld."
+				) % [
+					String(contract.get("customer", "Vertrag")),
+					_format_eur(price),
+					_format_eur(db),
+				],
+				"questions": [
+					"Wie viel verliert das Unternehmen an jedem Stück?",
+					"Wie viel Stück müssen verkauft werden, um den Verlust zu decken?",
+				],
+				"lesson": (
+					"Ein Vertrag unter dem Deckungsbeitrag ist kein sicherer "
+					+ "Umsatz, sondern ein sicherer Verlust."
+				),
+				"action": "Prüfe die Verträge im Finanzbereich.",
+			})
 	return out
 
 
