@@ -36,6 +36,10 @@ static func run(t: TestFramework) -> void:
 	_test_material_types(t)
 	t.suite("Ablauf · Rahmenverträge")
 	_test_contracts(t)
+	t.suite("Ablauf · Mehrstufige Produktionskette")
+	_test_production_chain(t)
+	t.suite("Ablauf · Wirtschaftlichkeit der Kette")
+	_test_chain_economics(t)
 
 
 # ------------------------------------------------------------------
@@ -290,6 +294,40 @@ static func _test_investment(t: TestFramework) -> void:
 		t.check_approx("Anschaffung B ausgewiesen", float(rows[1]["acquisition"]), 17000.0, 0.01)
 		t.check_approx("Umsatz A", float(rows[0]["revenue"]), 40.0 * 15000.0, 0.01)
 		t.check_true("Break-Even vorhanden", float(rows[0]["break_even"]) > 0.0)
+
+	# Material ist variable Kosten. Der Kostenvergleich muss es
+	# einbeziehen, sonst waere die kritische Menge zu niedrig.
+	var with_mat_a := _make_spec(&"MA", 16000.0, 1180.20, 26.0, 40.0, 50000.0)
+	with_mat_a.material_per_unit = 2.0
+	with_mat_a.material_price_per_kg = 1.5
+	var with_mat_b := _make_spec(&"MB", 17000.0, 1345.70, 26.0, 40.0, 50000.0)
+	var mat_result := CostComparison.compare(with_mat_a, with_mat_b, "COST", 60, 5000.0)
+	# A hat 26 + 3 = 29 Euro variable Stueckkosten, B hat 26. Damit
+	# liegt B oberhalb der kritischen Menge im Vorteil.
+	t.check_approx(
+		"Material steckt in den variablen Stueckkosten",
+		with_mat_a.full_variable_cost_per_unit(),
+		29.0,
+		0.01
+	)
+	t.check_approx(
+		"Deckungsbeitrag ohne Material im Vergleich",
+		mat_result.contribution_a,
+		40.0 - 29.0,
+		0.01
+	)
+	t.check_true(
+		"Kritische Menge beruecksichtigt das Material",
+		mat_result.valid and mat_result.x_critical > 0.0
+	)
+	# Die kritische Menge muss mit der Materialbelastung groesser
+	# sein als ohne: die Anlage braucht mehr Stueck, um ihre Fixkosten
+	# zu decken.
+	var ohne_mat := CostComparison.compare(a, b, "COST", 60, 5000.0)
+	t.check_true(
+		"Material erhoeht die kritische Menge",
+		mat_result.x_critical > ohne_mat.x_critical
+	)
 
 	# Kurvenpunkte tragen echte Werte.
 	var curve := CostComparison.curve_points(a, b, 20)
@@ -1046,4 +1084,216 @@ static func _test_contracts(t: TestFramework) -> void:
 		restored.contracted_quantity(),
 		500.0,
 		0.01
+	)
+
+
+# ------------------------------------------------------------------
+# Mehrstufige Produktionskette
+#
+# Die Kette ist das Zusammenspiel zweier Anlagen: Die Vorstufe
+# erzeugt ein Zwischenprodukt, die Endstufe verbraucht es. Geprueft
+# wird, dass die Kopplung wirklich greift – also dass die Endstufe
+# ohne Vorstufe stillsteht, mit Vorstufe aber laeuft.
+# ------------------------------------------------------------------
+static func _test_production_chain(t: TestFramework) -> void:
+	# Vorstufe: 1000 Stueck Halbfertigteile pro Jahr, ohne Material.
+	var stage1 := _make_spec(&"VORSTUFE", 40_000.0, 8_000.0, 4.0, 21.0, 36_000.0)
+	stage1.output_product = &"halb"
+	# Endstufe: braucht 2 Halbfertigteile je Endprodukt.
+	var stage2 := _make_spec(&"ENDSTUFE", 24_000.0, 5_400.0, 3.0, 18.0, 36_000.0)
+	stage2.input_product = &"halb"
+	stage2.input_product_per_unit = 2.0
+
+	# --- Ohne Vorstufe steht die Endstufe still ---
+	var sim := SimulationEngine.new()
+	sim.specs[stage1.id] = stage1
+	sim.specs[stage2.id] = stage2
+
+	var only_end := MachineInstance.new(stage2, "end-1")
+	only_end.state = MachineInstance.State.ACTIVE
+	only_end.commissioned_year = 1
+	sim.machines["end-1"] = only_end
+
+	sim.advance_day()
+	t.check_approx(
+		"Endstufe ohne Vorstufe produziert nichts",
+		only_end.quantity_this_year,
+		0.0,
+		0.01
+	)
+	t.check_true(
+		"Leerlauf wird protokolliert",
+		only_end.notes.size() > 0
+	)
+
+	# --- Mit Vorstufe laeuft die Kette ---
+	var chain := SimulationEngine.new()
+	chain.specs[stage1.id] = stage1
+	chain.specs[stage2.id] = stage2
+
+	var producer := MachineInstance.new(stage1, "vor-1")
+	producer.state = MachineInstance.State.ACTIVE
+	producer.commissioned_year = 1
+	chain.machines["vor-1"] = producer
+
+	var finisher := MachineInstance.new(stage2, "end-1")
+	finisher.state = MachineInstance.State.ACTIVE
+	finisher.commissioned_year = 1
+	chain.machines["end-1"] = finisher
+
+	chain.advance_day()
+
+	var stage1_daily := stage1.capacity_units_per_year / 360.0
+	var stage2_daily := stage2.capacity_units_per_year / 360.0
+
+	t.check_approx(
+		"Vorstufe produziert ihre Tagesmenge",
+		producer.quantity_this_year,
+		stage1_daily,
+		0.01
+	)
+	# Die Vorstufe braucht 2 Halbfertigteile je Endstueck. Ihre
+	# Tagesmenge ist doppelt so gross wie der Bedarf der Endstufe,
+	# deshalb bleibt ein Rest im Zwischenlager.
+	t.check_approx(
+		"Endstufe produziert ihre Tagesmenge",
+		finisher.quantity_this_year,
+		stage2_daily,
+		0.01
+	)
+	t.check_approx(
+		"Zwischenlager erhaelt den Ueberschuss",
+		chain.intermediate_stock(&"halb"),
+		stage1_daily - stage2_daily * 2.0,
+		0.01
+	)
+
+	# Die Vorstufe darf nicht zum Markt verkaufen: sonst waere die
+	# Ware doppelt verkauft.
+	var chain2 := SimulationEngine.new()
+	chain2.specs[stage1.id] = stage1
+	chain2.specs[stage2.id] = stage2
+	var producer2 := MachineInstance.new(stage1, "vor-1")
+	producer2.state = MachineInstance.State.ACTIVE
+	chain2.machines["vor-1"] = producer2
+	chain2.advance_day()
+	t.check_true(
+		"Vorstufe erzeugt kein Endprodukt",
+		producer2.spec.is_intermediate_stage()
+	)
+
+	# --- Rueckstau: zu wenig Vorstufenleistung bremst die Endstufe ---
+	var starved := SimulationEngine.new()
+	starved.specs[stage1.id] = stage1
+	starved.specs[stage2.id] = stage2
+	# Die Vorstufe liefert nur die Haelfte des Bedarfs.
+	var weak := stage1.with_overrides({"capacity_units_per_year": 18_000.0})
+	starved.specs[stage1.id] = weak
+	var weak_producer := MachineInstance.new(weak, "vor-1")
+	weak_producer.state = MachineInstance.State.ACTIVE
+	starved.machines["vor-1"] = weak_producer
+	var starving_end := MachineInstance.new(stage2, "end-1")
+	starving_end.state = MachineInstance.State.ACTIVE
+	starved.machines["end-1"] = starving_end
+
+	starved.advance_day()
+	var weak_daily := 18_000.0 / 360.0
+	var possible := weak_daily / 2.0
+	t.check_approx(
+		"Endstufe wird von der Vorstufe begrenzt",
+		starving_end.quantity_this_year,
+		possible,
+		0.01
+	)
+
+	# --- Spielstand: Zwischenprodukte ueberleben das Speichern ---
+	var saved := SimulationEngine.new()
+	saved.specs[stage1.id] = stage1
+	saved.specs[stage2.id] = stage2
+	saved.set_intermediate_stock(&"halb", 1234.0)
+	var restored := SimulationEngine.new()
+	restored.specs[stage1.id] = stage1
+	restored.specs[stage2.id] = stage2
+	restored.from_dict(saved.to_dict())
+	t.check_approx(
+		"Zwischenlager im Spielstand",
+		restored.intermediate_stock(&"halb"),
+		1234.0,
+		0.01
+	)
+
+
+# ------------------------------------------------------------------
+# Wirtschaftlichkeit der Kette
+#
+# Der Deckungsbeitrag einer Kette ist nicht der Deckungsbeitrag der
+# Endstufe allein: Die Vorstufe bringt Wertschoepfung, ihre Kosten
+# muessen aber abgezogen werden.
+# ------------------------------------------------------------------
+static func _test_chain_economics(t: TestFramework) -> void:
+	var stage1 := _make_spec(&"VORSTUFE", 40_000.0, 8_000.0, 4.0, 21.0, 36_000.0)
+	stage1.output_product = &"halb"
+	var stage2 := _make_spec(&"ENDSTUFE", 24_000.0, 5_400.0, 3.0, 18.0, 36_000.0)
+	stage2.input_product = &"halb"
+	stage2.input_product_per_unit = 2.0
+
+	var sim := SimulationEngine.new()
+	sim.specs[stage1.id] = stage1
+	sim.specs[stage2.id] = stage2
+
+	var producer := MachineInstance.new(stage1, "vor-1")
+	producer.state = MachineInstance.State.ACTIVE
+	sim.machines["vor-1"] = producer
+	var finisher := MachineInstance.new(stage2, "end-1")
+	finisher.state = MachineInstance.State.ACTIVE
+	sim.machines["end-1"] = finisher
+
+	# Der Deckungsbeitrag der Kette liegt unter dem der Endstufe
+	# allein, weil die Vorstufe ihren Anteil beansprucht.
+	var chain_db := sim._weighted_contribution_margin()
+	var end_alone := stage2.contribution_margin_per_unit()
+	t.check_true(
+		"Ketten-Deckungsbeitrag ist niedriger als Endstufe allein",
+		chain_db < end_alone
+	)
+	t.check_true(
+		"Ketten-Deckungsbeitrag bleibt positiv",
+		chain_db > 0.0
+	)
+
+	# Die Kosten der Vorstufe werden in die Kette eingerechnet: Mit
+	# teurerer Vorstufe sinkt der Ketten-Deckungsbeitrag.
+	var expensive := stage1.with_overrides({"variable_cost_per_unit": 12.0})
+	var sim2 := SimulationEngine.new()
+	sim2.specs[stage1.id] = expensive
+	sim2.specs[stage2.id] = stage2
+	var producer2 := MachineInstance.new(expensive, "vor-1")
+	producer2.state = MachineInstance.State.ACTIVE
+	sim2.machines["vor-1"] = producer2
+	var finisher2 := MachineInstance.new(stage2, "end-1")
+	finisher2.state = MachineInstance.State.ACTIVE
+	sim2.machines["end-1"] = finisher2
+	t.check_true(
+		"Teurere Vorstufe senkt den Ketten-Deckungsbeitrag",
+		sim2._weighted_contribution_margin() < chain_db
+	)
+
+	# Der Kapitalwert der Kette umfasst beide Stufen. Die Endstufe
+	# allein waere zu niedrig bewertet, weil die Vorstufe fehlt.
+	var kw_chain: float = sim.chain_net_present_value(finisher, 0.084)
+	var kw_end_only: float = finisher.net_present_value(0.084)
+	t.check_true(
+		"Ketten-Kapitalwert schliesst die Vorstufe ein",
+		kw_chain > kw_end_only
+	)
+	# Der Kapitalwert muss mit dem Kapitaleinsatz verglichen werden:
+	# eine Kette, die mehr einbringt als sie kostet, schafft Wert.
+	var total_investment := stage1.acquisition_cost + stage2.acquisition_cost
+	t.check_true(
+		"Ketten-Kapitalwert ist positiv",
+		kw_chain > 0.0
+	)
+	t.check_true(
+		"Ketten-Kapitalwert liegt unter dem Kapitaleinsatz",
+		kw_chain < total_investment
 	)

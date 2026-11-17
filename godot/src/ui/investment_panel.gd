@@ -65,13 +65,13 @@ func _ready() -> void:
 	picker.add_child(_label("Anlage A:"))
 	var option_a := OptionButton.new()
 	for spec in MachineCatalog.all():
-		option_a.add_item(spec.display_name)
+		option_a.add_item(_option_label(spec))
 	option_a.item_selected.connect(func(i): _select_a(i))
 	picker.add_child(option_a)
 	picker.add_child(_label("Anlage B:"))
 	var option_b := OptionButton.new()
 	for spec in MachineCatalog.all():
-		option_b.add_item(spec.display_name)
+		option_b.add_item(_option_label(spec))
 	option_b.item_selected.connect(func(i): _select_b(i))
 	picker.add_child(option_b)
 
@@ -142,6 +142,19 @@ func _ready() -> void:
 	machine_a = MachineCatalog.car_a()
 	machine_b = MachineCatalog.car_b()
 	_refresh()
+
+
+## Die Beschriftung einer Anlage in der Auswahl.
+##
+## Die Rolle in der Produktionskette steht dabei, weil sie die
+## Vergleichbarkeit veraendert: Eine Vorstufe verkauft nichts direkt,
+## sie beliefert die Endstufe.
+func _option_label(spec: MachineSpec) -> String:
+	if spec.is_intermediate_stage():
+		return "%s (Vorstufe)" % spec.display_name
+	if spec.is_final_stage():
+		return "%s (Endstufe)" % spec.display_name
+	return spec.display_name
 
 
 func _label(text: String) -> Label:

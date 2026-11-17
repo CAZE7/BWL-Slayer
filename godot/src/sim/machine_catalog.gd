@@ -35,6 +35,12 @@ const PACKER_ID := &"MACHINE_D"
 const MATERIAL_STEEL := &"stahl"
 const MATERIAL_PACKAGING := &"verpackung"
 
+## Das Zwischenprodukt der Kette: Halbfertigteil.
+##
+## Die Förderbandlinie erzeugt es, der Verpackungsautomat verbraucht
+## es. Damit ist die Produktion wirklich zweistufig.
+const PRODUCT_HALF := &"halbfertigteil"
+
 
 ## Die Bezeichnung der Materialart für die Anzeige.
 static func material_label(material_type: StringName) -> String:
@@ -103,20 +109,28 @@ static func car_b() -> MachineSpec:
 	return spec
 
 
+## Die Vorstufe der Kette: Sie formt Rohmaterial zu Halbfertigteilen.
+##
+## Der Preis ist der interne Verrechnungspreis zwischen den Stufen.
+## Er bestimmt, wie viel Wert die Vorstufe zur Kette beitraegt.
 static func conveyor() -> MachineSpec:
 	var spec := MachineSpec.new()
 	spec.id = CONVEYOR_ID
 	spec.display_name = "Förderbandlinie"
-	spec.description = "Materialintensive Linie mit hoher Kapazität – lohnt sich erst bei großer Menge."
+	spec.description = "Vorstufe: formt Stahl zu Halbfertigteilen. Ihre Leistung begrenzt die Verpackung."
 	spec.acquisition_cost = 48000.0
 	spec.residual_value = 8000.0
 	spec.useful_life_years = 8
 	spec.imputed_interest_rate = 0.08
 	spec.fixed_operating_costs = 9200.0
 	spec.variable_cost_per_unit = 4.0
+	# Interner Verrechnungspreis: das ist der Wert, den ein
+	# Halbfertigteil fuer die naechste Stufe hat.
 	spec.price_per_unit = 21.0
 	spec.capacity_units_per_year = 180000.0
 	spec.product_name = "Halbfertigteil"
+	# Die Vorstufe erzeugt ein Zwischenprodukt statt eines Endprodukts.
+	spec.output_product = PRODUCT_HALF
 	spec.material_type = MATERIAL_STEEL
 	spec.material_per_unit = 2.5
 	spec.material_price_per_kg = 1.4
@@ -129,11 +143,15 @@ static func conveyor() -> MachineSpec:
 	return spec
 
 
+## Die Endstufe der Kette: Sie verpackt Halbfertigteile.
+##
+## Ohne die Förderbandlinie steht diese Anlage still: Sie braucht
+## zwei Halbfertigteile je fertiger Einheit.
 static func packer() -> MachineSpec:
 	var spec := MachineSpec.new()
 	spec.id = PACKER_ID
 	spec.display_name = "Verpackungsautomat"
-	spec.description = "Geringe Fixkosten, hoher Deckungsbeitrag je Stück – der Klassiker für den Einstieg."
+	spec.description = "Endstufe: verpackt Halbfertigteile. Braucht die Förderbandlinie als Zulieferer."
 	spec.acquisition_cost = 24000.0
 	spec.residual_value = 3000.0
 	spec.useful_life_years = 6
@@ -143,6 +161,9 @@ static func packer() -> MachineSpec:
 	spec.price_per_unit = 18.0
 	spec.capacity_units_per_year = 90000.0
 	spec.product_name = "Verpackte Ware"
+	# Die Endstufe verbraucht das Zwischenprodukt der Vorstufe.
+	spec.input_product = PRODUCT_HALF
+	spec.input_product_per_unit = 2.0
 	spec.material_type = MATERIAL_PACKAGING
 	spec.material_per_unit = 0.6
 	spec.material_price_per_kg = 1.1

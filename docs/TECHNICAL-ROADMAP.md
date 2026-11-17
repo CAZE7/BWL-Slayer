@@ -113,11 +113,37 @@ eine nicht existierende Methode, `_average_material_price()` fehlte.
 
 ### Phase 5 — Wirtschaftstiefe  ⬜
 
-- Weitere Produktionsketten, Lagerbestände, Materialbeschaffung
 - Fremdfinanzierung, Tilgungspläle, Dividendenpolitik
 - Finanzplanung (Kapitalbedarfsrechnung, Cashflow-Plan)
 - Innenfinanzierung (Lohmann-Ruchti als Spielmechanik)
 - Aktienbewertung (DDM, CAPM, Gordon) als Bewertungswerkzeug
+
+### Mehrstufige Produktionskette  ✅
+
+Die Kette ist der Schritt vom „zwei unabhängige Anlagen" zum
+„Betrieb, in dem eine Stufe die andere braucht":
+
+| Element | Umsetzung |
+|---|---|
+| Vorstufe | Förderbandlinie: formt Stahl zu Halbfertigteilen |
+| Endstufe | Verpackungsautomat: verarbeitet 2 Halbfertigteile je Einheit |
+| Zwischenlager | Bestand je Zwischenprodukt, in Stück, in der Bilanz bewertet |
+| Kopplung | Die Endstufe produziert nur, was die Vorstufe geliefert hat |
+| Reihenfolge | Die Vorstufe läuft zuerst; ihre Tagesproduktion steht der Endstufe noch am selben Tag zur Verfügung |
+| Engpass | Zu wenig Vorstufenleistung bremst die Endstufe sichtbar aus |
+| Absatz | Nur Endstufen verkaufen Ware; eine Vorstufe verkauft nichts an den Markt |
+| Bewertung | Zwischenprodukte werden mit den Herstellkosten der Vorstufe bewertet |
+| Kapitalwert | Der Kapitalwert einer Kette umfasst beide Stufen, nicht nur die Endstufe |
+| Sichtbarkeit | Zwischenlager in der Seitenleiste, Stufenrolle auf dem Gelände, Leerlauf bei fehlender Zulieferung |
+
+Der **Ketten-Deckungsbeitrag** ist der Deckungsbeitrag der Endstufe
+plus die Wertschöpfung der Vorstufe, abzüglich deren Kosten. Wer nur
+die Endstufe rechnet, hält die Vorstufe für kostenlos — genau der
+Fehler, den das Spiel zeigen soll.
+
+Der Berater erkennt drei Kettenprobleme: fehlender Zulieferer,
+Rückstau im Zwischenlager und die Abweichung zwischen Nachfrage und
+Kapazität.
 
 ### Phase 6 — Lernintegration  ⬜
 
@@ -134,6 +160,8 @@ Jedes BWL-Fachthema wird zum betriebswirtschaftlichen Problem:
 | Du-Pont | Kennzahlendashboard | ✅ |
 | Kapitalbindungsdauer | Kapitalbedarf aus Vorlauf, Produktion und Zahlungsziel | ✅ |
 | Materialwirtschaft | getrennte Materialarten, Vorlauf, Reichweite | ✅ |
+| Produktionskette | zweistufige Kette mit Zwischenlager und Engpasswirkung | ✅ |
+| Nachfrage vs. Kapazität | Berater vergleicht Aufträge und Rahmenverträge mit der Kapazität | ✅ |
 | Rahmenverträge | gesicherte Nachfrage mit Preisbindung | ✅ |
 | Bezugsrecht | Kapitalerhöhung als Finanzierungsoption | ⬜ |
 
@@ -149,6 +177,26 @@ berechnet und ist damit immer richtig.
 
 Damit ist die Brücke zwischen Lernen und Spiel geschlossen: Die
 Welten erklären die Konzepte, der Betriebs-Lab rechnet damit.
+
+### Zwei Fehler im Berater und im Kostenvergleich  ✅
+
+**Fehlende Beraterfunktion.** Der Commit, der den Fahrplan mit
+Zielzahl einführte, rief `_analyze_next_steps()` auf, definierte die
+Funktion aber nicht. Im Spiel wäre beim ersten Analyseaufruf ein
+Laufzeitfehler entstanden – die Tests deckten den Berater nicht ab.
+Seit der neuen Testsuite `test_advisor.gd` hat der Berater eigene
+Prüfungen: Grundbefunde, Frage-statt-Antwort, Nachfrage gegen
+Kapazität, Kettenbefunde und der Fahrplan.
+
+**Material im Kostenvergleich.** Der Kostenvergleich rechnete mit
+`Preis − variable Stückkosten` und ließ das Material weg. Für
+Anlagen mit Materialverbrauch war der Deckungsbeitrag damit
+überhöht und die kritische Menge zu niedrig. Das Material ist
+variable Kosten und gehört in die Rechnung.
+
+Die geschützte JS-Engine bleibt davon unberührt: Sie kennt kein
+Material, und ihre Referenzwerte bleiben gültig. Die Abweichung
+betrifft ausschließlich das Spielmodul `CostComparison`.
 
 ### Betriebs-CI: belastbare Diagnose  ✅
 

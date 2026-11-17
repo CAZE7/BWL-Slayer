@@ -35,7 +35,11 @@ func _on_order_received(order: Dictionary) -> void:
 	var margin := 0.0
 	var machines: Array[MachineInstance] = sim.active_machines()
 	for m in machines:
-		margin += m.spec.contribution_margin_per_unit() * minf(
+		# Nur Endstufen: eine Vorstufe verkauft nichts an den Markt.
+		# Ihr Beitrag steckt im Ketten-Deckungsbeitrag der Endstufe.
+		if m.spec.is_intermediate_stage():
+			continue
+		margin += sim._chain_contribution_margin(m.spec) * minf(
 			quantity, m.spec.capacity_units_per_year
 		)
 	if margin <= 0.0:
@@ -242,6 +246,8 @@ func analyze() -> Dictionary:
 	findings.append_array(_analyze_financing(sim))
 	findings.append_array(_analyze_material_supply(sim))
 	findings.append_array(_analyze_contracts(sim))
+	findings.append_array(_analyze_production_chain(sim, machines))
+	findings.append_array(_analyze_demand_vs_capacity(sim, machines))
 	findings.append_array(_analyze_next_steps(sim, machines))
 
 	current_analysis = {
@@ -265,8 +271,17 @@ func _analyze_utilization(machines: Array[MachineInstance]) -> Array:
 	var out: Array = []
 	if machines.is_empty():
 		return out
-	var sim := Simulation
-	var utilization := sim.current_utilization()
+	# Die Auslastung wird aus den uebergebenen Anlagen berechnet,
+	# nicht aus dem globalen Zustand. Sonst waere die Analyse nicht
+	# pruefbar und koennte Anzeige und Wirklichkeit auseinanderlaufen.
+	var total_capacity := 0.0
+	var total_produced := 0.0
+	for m in machines:
+		total_capacity += m.spec.capacity_units_per_year
+		total_produced += m.quantity_this_year
+	var utilization := 0.0
+	if total_capacity > 0.0:
+		utilization = (total_produced / total_capacity) * 100.0
 
 	if utilization < 40.0:
 		out.append({
@@ -892,6 +907,275 @@ func _analyze_capital_binding(sim: Node, machines: Array[MachineInstance]) -> Ar
 # ==================================================================
 # Veröffentlichung
 # ==================================================================
+
+## Der Fahrplan: die naechste Handlung mit konkreter Zielzahl.
+##
+## Die uebrigen Module melden Probleme. Der Fahrplan geht einen
+## Schritt weiter: er nennt, was als Naechstes zu tun ist – mit
+## einer Zahl, gegen die der Spieler pruefen kann.
+##
+## Die Reihenfolge folgt der Logik des Unternehmens:
+##   1. Auslastung unter 60 %: erst mehr aus vorhandener Kapazitaet
+##      produzieren. Zielzahl: 80 % Auslastung.
+##   2. Auslastung passt, aber die Kasse traegt weniger als drei
+##      Monatsfixkosten: Liquiditaetsreserve aufbauen. Zielzahl in Euro.
+##   3. Beides passt: jetzt lohnt sich eine Investition – mit dem
+##      Namen der Anlage, die den besten Kapitalwert hat.
+##
+## Begruendung und Lektion bleiben erhalten: Der Fahrplan gibt keine
+## fertige Entscheidung ab, sondern die Frage, die davor steht.
+func _analyze_next_steps(sim: Node, machines: Array[MachineInstance]) -> Array:
+	var out: Array = []
+	if machines.is_empty():
+		return out
+
+	var utilization := sim.current_utilization()
+	var economy: EconomyState = sim.economy
+
+	# 1) Erst die vorhandene Kapazitaet nutzen.
+	if utilization < 60.0:
+		var capacity := 0.0
+		for m in machines:
+			capacity += m.spec.capacity_units_per_year
+		var target_quantity := capacity * 0.8
+		var current_quantity := 0.0
+		for m in machines:
+			current_quantity += m.quantity_this_year
+		out.append({
+			"id": "next_step_utilization",
+			"severity": "info",
+			"title": "Nächster Schritt: Auslastung erhöhen",
+			"analysis": "Deine Anlagen laufen zu %d %% Auslastung. Bevor du investierst, lohnt sich zuerst die vorhandene Kapazitaet: Ziel sind 80 %% Auslastung, also %s Stueck statt %s. Das kostet nichts und bringt Deckungsbeitrag auf die bereits bezahlten Fixkosten." % [
+				int(utilization),
+				_format_int(target_quantity),
+				_format_int(current_quantity),
+			],
+			"questions": [
+				"Welche Anlage hat die höchste Kapazität bei den geringsten Fixkosten?",
+				"Welche Kundenaufträge lehnt dein Betrieb bisher ab?",
+			],
+			"lesson": "Fixkosten sind sunkener Kosten: Sie fallen auch bei leerer Halle an. Erst die vorhandene Kapazitaet zu nutzen ist immer die guenstigste Investition.",
+			"action": "Pruefe deine offenen Angebote und stelle die Auftragsannahme auf aktiv.",
+		})
+		return out
+
+	# 2) Liquiditaetsreserve, wenn die Kasse zu duenn ist.
+	var monthly_fixed := sim.monthly_fixed_costs()
+	if monthly_fixed > 0.0:
+		var reserve_target := monthly_fixed * 3.0
+		if economy.cash < reserve_target:
+			out.append({
+				"id": "next_step_liquidity",
+				"severity": "warning",
+				"title": "Nächster Schritt: Liquiditätsreserve aufbauen",
+				"analysis": "Die Auslastung passt, aber die Kasse liegt bei %s Euro. Drei Monatsfixkosten sind %s Euro. Unter dieser Grenze kann ein Zahlungsverzug die Investition stoppen, obwohl sie rechnerisch rentabel ist." % [
+					_format_eur(economy.cash),
+					_format_eur(reserve_target),
+				],
+				"questions": [
+					"Welche Zahlung kommt in den nächsten Wochen herein?",
+					"Was bindet dein Kapital – Lagerbestand oder Forderungen?",
+				],
+				"lesson": "Eine Investition, die du nicht finanzieren kannst, bringt dir keinen Deckungsbeitrag. Liquiditaet ist die Voraussetzung fuer Investition.",
+				"action": "Oeffne die Finanzierung und pruefe, ob ein Kredit deine Reserve schont.",
+			})
+			return out
+
+	# 3) Investition: die Anlage mit der besten Kapitalrendite.
+	#
+	# Verglichen wird nicht der absolute Kapitalwert (der waere bei
+	# einer teuren Anlage einfach groesser), sondern die Rendite auf
+	# das eingesetzte Kapital. Nur die beantwortet die Frage
+	# "wohin soll mein naechster Euro".
+	var best_name := ""
+	var best_ratio := -INF
+	var best_npv := 0.0
+	for m in machines:
+		var spec := m.spec
+		# Nur Endstufen tragen zum Absatz bei – eine Vorstufe wird
+		# gemeinsam mit ihrer Endstufe bewertet.
+		if spec.is_intermediate_stage():
+			continue
+		var rate := spec.effective_interest_rate()
+		var npv := m.net_present_value(rate)
+		var investment := spec.acquisition_cost
+		# Bei einer Kette zaehlt die Vorstufe mit: Sie ist Teil
+		# derselben Investitionsentscheidung.
+		if spec.input_product != &"":
+			var producers := sim.producers_of(spec.input_product)
+			for p in producers:
+				investment += p.spec.acquisition_cost
+				npv += sim.chain_net_present_value(m, rate) - m.net_present_value(rate)
+		if investment <= 0.0:
+			continue
+		var ratio := npv / investment
+		if ratio > best_ratio:
+			best_ratio = ratio
+			best_name = spec.display_name
+			best_npv = npv
+	if best_name.is_empty() or best_ratio <= 0.0:
+		# Keine Anlage mit positivem Kapitalwert: dann ist Auslastung
+		# die richtige Naechste – aber die wurde oben schon geprueft.
+		return out
+	out.append({
+		"id": "next_step_investment",
+		"severity": "info",
+		"title": "Nächster Schritt: Kapazität erweitern",
+		"analysis": "Auslastung und Liquiditaet passen. Jetzt lohnt sich eine weitere Anlage: '%s' erreicht bei voller Auslastung den besten Kapitalwert im Verhaeltnis zum Kapitaleinsatz (%s Euro bei %s Euro Investition). Vergleiche die Investitionen, bevor du dich entscheidest." % [
+			best_name,
+			BWLEngine.format_eur(best_npv),
+			BWLEngine.format_eur(best_npv / best_ratio) if best_ratio > 0.0 else "-",
+		],
+		"questions": [
+			"Welche Anlage hat den hoechsten Kapitalwert?",
+			"Wie viel Kapital bindest du dafuer – und wie lange?",
+		],
+		"lesson": "Eine Investition schafft Wert, wenn ihr Kapitalwert ihre Anschaffung uebersteigt. Der Kapitalwert ist der Barwert der erwarteten Cashflows.",
+		"action": "Oeffne die Investitionsentscheidung und vergleiche die Kapitalwerte.",
+	})
+	return out
+
+
+## Produktionskette: die Kopplung der Stufen sichtbar machen.
+##
+## Drei Faelle sind fuer den Spieler wichtig:
+##   * Eine Endstufe ohne Vorstufe steht still.
+##   * Die Vorstufe ist der Engpass (Rueckstau im Zwischenlager).
+##   * Die Vorstufe produziert mehr, als die Endstufe verbraucht.
+func _analyze_production_chain(sim: Node, machines: Array[MachineInstance]) -> Array:
+	var out: Array = []
+	if machines.is_empty():
+		return out
+
+	# Endstufen ohne Vorstufe im Betrieb.
+	for m in machines:
+		if m.spec.input_product == &"":
+			continue
+		var has_producer := false
+		for other in machines:
+			if other.spec.output_product == m.spec.input_product:
+				has_producer = true
+				break
+		if has_producer:
+			continue
+		out.append({
+			"id": "chain_missing_stage_%s" % m.spec.id,
+			"severity": "warning",
+			"title": "Zulieferer fehlt: %s steht still" % m.spec.display_name,
+			"analysis": "'%s' verbraucht %s je Einheit, aber keine Anlage im Betrieb liefert dieses Zwischenprodukt. Die Anlage laeuft im Leerlauf – ihre Fixkosten fallen an, ohne dass Ware entsteht." % [
+				m.spec.display_name, String(m.spec.input_product)
+			],
+			"questions": [
+				"Welche Anlage stellt dieses Zwischenprodukt her?",
+				"Verdient sich diese Vorstufe, wenn die Endstufe stillsteht?",
+			],
+			"lesson": "In einer Produktionskette begrenzt die langsamste Stufe das Ergebnis. Fehlt eine Stufe, zahlt man deren Fixkosten ohne Gegenwert.",
+			"action": "Pruefe im Maschinenkatalog, welche Anlage das Zwischenprodukt herstellt.",
+		})
+		return out
+
+	# Rueckstau: die Vorstufe liefert mehr, als die Endstufe abnimmt.
+	for product in sim.intermediate_products():
+		var stock := sim.intermediate_stock(product)
+		if stock <= 0.0:
+			continue
+		# Wie viel braucht die Endstufe pro Tag?
+		var daily_demand := 0.0
+		var demand_exists := false
+		for m in machines:
+			if m.spec.input_product != product:
+				continue
+			demand_exists = true
+			daily_demand += (
+				m.spec.capacity_units_per_year
+				/ 360.0
+				* m.spec.input_product_per_unit
+			)
+		if not demand_exists:
+			continue
+		# Mehr als ein Tagesbedarf im Lager bedeutet: die Vorstufe
+		# produziert schneller, als abgenommen wird.
+		if stock > daily_demand:
+			out.append({
+				"id": "chain_backlog_%s" % product,
+				"severity": "info",
+				"title": "Rückstau im Zwischenlager: %s" % String(product),
+				"analysis": "Im Zwischenlager liegen %s Stueck %s. Das ist mehr als ein Tagesbedarf (%s Stueck). Die Vorstufe produziert schneller, als die Endstufe abnimmt – das bindet Kapital ohne Mehrwert." % [
+					_format_int(stock), String(product), _format_int(daily_demand)
+				],
+				"questions": [
+					"Lohnt es sich, die Vorstufe zu erweitern?",
+					"Welche Stufe ist wirtschaftlich der Engpass?",
+				],
+				"lesson": "Zwischenprodukte binden Kapital, ohne Erloes zu bringen. Ein wachsender Lagerbestand zeigt eine Verklemmung in der Kette.",
+				"action": "Pruefe, welche Stufe du erweitern willst.",
+			})
+			return out
+	return out
+
+
+## Nachfrage gegen Kapazitaet: der Kern des Absatzproblems.
+##
+## Es gibt zwei gegensaetzliche Faelle, beide sind Fehler:
+##   * Die Nachfrage uebersteigt die Kapazitaet: Auftraege werden
+##     nicht bedient, Umsatz geht verloren.
+##   * Die Kapazitaet uebersteigt die Nachfrage: Fixkosten stehen
+##     einem zu kleinen Ertrag gegenueber.
+func _analyze_demand_vs_capacity(sim: Node, machines: Array[MachineInstance]) -> Array:
+	var out: Array = []
+	if machines.is_empty():
+		return out
+
+	# Kapazitaet der Endstufen (nur die kommen in den Absatz).
+	var capacity := 0.0
+	for m in machines:
+		if m.spec.is_intermediate_stage():
+			continue
+		capacity += m.spec.capacity_units_per_year
+	if capacity <= 0.0:
+		return out
+
+	# Nachfrage aus dem laufenden Geschaeft: offene Auftraege plus
+	# Rahmenvertraege.
+	var open_quantity := 0.0
+	for order in sim.orders:
+		if order.get("status", "") == "accepted":
+			open_quantity += float(order.get("quantity", 0.0))
+	var contracted := sim.contracted_quantity()
+	var demand := open_quantity + contracted
+
+	if demand > capacity * 1.2:
+		out.append({
+			"id": "demand_over_capacity",
+			"severity": "warning",
+			"title": "Nachfrage größer als Kapazität",
+			"analysis": "Offene Auftraege und Rahmenvertraege ergeben %s Stueck Bedarf – deine Endstufen schaffen %s Stueck. Du kannst nicht alles bedienen: Der Markt sieht, dass du zu langsam bist." % [
+				_format_int(demand), _format_int(capacity)
+			],
+			"questions": [
+				"Welche Anlage erweitert die Kapazitaet am guenstigsten?",
+				"Wie viel Deckungsbeitrag bringt die zusaetzliche Menge?",
+			],
+			"lesson": "Kapazitaetsengpaesse kosten Umsatz, den man nicht sieht: Der Auftrag geht an den Wettbewerb.",
+			"action": "Pruefe deine Auslastung und vergleiche eine Erweiterungsinvestition.",
+		})
+	elif capacity > 0.0 and demand > 0.0 and demand < capacity * 0.5:
+		out.append({
+			"id": "capacity_over_demand",
+			"severity": "warning",
+			"title": "Kapazität größer als Nachfrage",
+			"analysis": "Deine Endstufen schaffen %s Stueck im Jahr, der Markt fragt aber nur %s Stueck nach. Die Fixkosten dieser Kapazitaet stehen einem Ertrag von %s Stueck gegenueber." % [
+				_format_int(capacity), _format_int(demand), _format_int(demand)
+			],
+			"questions": [
+				"Ab welcher Menge ist die Investition rentabel?",
+				"Kannst du die freie Kapazitaet mit einem anderen Produkt fuellen?",
+			],
+			"lesson": "Kapazitaet ist kein Ziel, sondern eine Voraussetzung. Zu viel Kapazitaet bedeutet Fixkosten ohne Deckungsbeitrag.",
+			"action": "Pruefe deine Auslastung und ueberlege, eine Anlage stillzulegen.",
+		})
+	return out
+
 
 ## Gibt neue Hinweise an die UI weiter (jede Empfehlung nur einmal).
 func _publish(findings: Array) -> void:

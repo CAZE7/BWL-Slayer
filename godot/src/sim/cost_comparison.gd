@@ -12,6 +12,18 @@ extends RefCounted
 ##   - die kritische Menge
 ##   - die Empfehlung des Beraters
 ##   - die Entscheidungsgrundlage der Investition
+##
+## WICHTIG - Abweichung zur Legacy-Engine:
+## Die geschuetzte JS-Engine kennt kein Material; ihr Deckungsbeitrag
+## ist `Preis - variable Stueckkosten`. Im Spiel wird der
+## Materialverbrauch aber zu Recht als variable Stueckkosten
+## behandelt: Wer Stahl kauft, hat damit variable Kosten. Sonst
+## waere die kritische Menge zu niedrig und die Empfehlung falsch.
+##
+## Die Legacy-Paritaet bleibt unberuehrt: Sie betrifft `BWLEngine`
+## (Lerninhalte), nicht dieses Spielmodul. Die Referenzwerte in
+## `content/reference_values.json` stammen aus der Legacy-Engine und
+## bleiben gueltig.
 
 class Result:
 	var x_critical: float = NAN
@@ -45,8 +57,10 @@ static func compare(
 	result.fixed_costs_b = b.total_fixed_costs()
 	result.total_fixed_a = result.fixed_costs_a
 	result.total_fixed_b = result.fixed_costs_b
-	result.contribution_a = a.contribution_margin_per_unit()
-	result.contribution_b = b.contribution_margin_per_unit()
+	# Der Deckungsbeitrag enthaelt den Materialverbrauch: er ist
+	# variable Kosten und muss in die Rechnung eingehen.
+	result.contribution_a = a.full_contribution_margin_per_unit()
+	result.contribution_b = b.full_contribution_margin_per_unit()
 	result.breakeven_a = a.break_even_quantity()
 	result.breakeven_b = b.break_even_quantity()
 
@@ -57,7 +71,12 @@ static func compare(
 			result.x_critical = (result.fixed_costs_b - result.fixed_costs_a) / denom
 			result.valid = true
 	else:
-		var denom_c := a.variable_cost_per_unit - b.variable_cost_per_unit
+		# Im Kostenvergleich zaehlen die vollstaendigen variablen
+		# Stueckkosten (inklusive Material). Nur damit sind die
+		# Kostenkurven und die kritische Menge widerspruchsfrei.
+		var denom_c := (
+			a.full_variable_cost_per_unit() - b.full_variable_cost_per_unit()
+		)
 		if not is_equal_approx(denom_c, 0.0):
 			result.x_critical = (result.fixed_costs_b - result.fixed_costs_a) / denom_c
 			result.valid = true
@@ -112,7 +131,9 @@ static func compare(
 			above_is_a = result.contribution_a > result.contribution_b
 		else:
 			below_is_a = result.fixed_costs_a < result.fixed_costs_b
-			above_is_a = a.variable_cost_per_unit < b.variable_cost_per_unit
+			above_is_a = (
+				a.full_variable_cost_per_unit() < b.full_variable_cost_per_unit()
+			)
 
 		result.cheaper_below = a.display_name if below_is_a else b.display_name
 		result.cheaper_above = a.display_name if above_is_a else b.display_name
@@ -194,7 +215,7 @@ static func evaluate_at(a: MachineSpec, b: MachineSpec, quantity: float) -> Arra
 	var specs: Array[MachineSpec] = [a, b]
 	for spec in specs:
 		var revenue := spec.price_per_unit * quantity
-		var variable := spec.variable_cost_per_unit * quantity
+		var variable := spec.full_variable_cost_per_unit() * quantity
 		var depreciation := spec.depreciation()
 		var imputed := spec.imputed_interest()
 		var fixed := spec.total_fixed_costs()

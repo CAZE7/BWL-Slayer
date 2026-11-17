@@ -56,6 +56,8 @@ static func _test_game_state_roundtrip(t: TestFramework) -> void:
 	sim.economy.cash = 43210.0
 	sim.economy.fixed_assets = 12000.0
 	sim.inventory_material = 750.0
+	sim.set_material_stock(MachineCatalog.MATERIAL_STEEL, 1_250.0)
+	sim.set_intermediate_stock(&"halbfertigteil", 3_400.0)
 
 	var sim_data := sim.to_dict()
 	var sim2 := SimulationEngine.new()
@@ -66,6 +68,18 @@ static func _test_game_state_roundtrip(t: TestFramework) -> void:
 	t.check_approx("Kasse erhalten", sim2.economy.cash, 43210.0, 0.01)
 	t.check_approx("Anlagevermoegen erhalten", sim2.economy.fixed_assets, 12000.0, 0.01)
 	t.check_approx("Materialbestand erhalten", sim2.inventory_material, 750.0, 0.01)
+	t.check_approx(
+		"Materialbestand je Art erhalten",
+		sim2.material_stock(MachineCatalog.MATERIAL_STEEL),
+		1_250.0,
+		0.01
+	)
+	t.check_approx(
+		"Zwischenlager erhalten",
+		sim2.intermediate_stock(&"halbfertigteil"),
+		3_400.0,
+		0.01
+	)
 
 	# Ein Reset setzt alles auf den Ausgangszustand zurueck.
 	sim2.reset()

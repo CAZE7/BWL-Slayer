@@ -804,6 +804,30 @@ func _machine_card(m: MachineInstance, selected: bool) -> Control:
 		v.add_child(_metric_row("Materialverbrauch",
 			"%.2f kg/Stück" % m.spec.material_per_unit))
 
+	# Die Rolle in der Produktionskette. Bei einer Endstufe zaehlt
+	# nicht die eigene Kapazitaet, sondern die Leistung der
+	# Vorstufe: Sie bestimmt, wie viel die Anlage verarbeiten kann.
+	if m.spec.is_intermediate_stage():
+		v.add_child(_metric_row("Stufe", "Vorstufe · liefert %s" % String(m.spec.output_product)))
+		v.add_child(_metric_row("Erzeugnis", m.spec.product_name))
+	elif m.spec.is_final_stage():
+		var input_stock: float = Simulation.intermediate_stock(m.spec.input_product)
+		var daily_need := (
+			m.spec.capacity_units_per_year / float(Simulation.DAYS_PER_YEAR)
+			* m.spec.input_product_per_unit
+		)
+		v.add_child(_metric_row("Stufe", "Endstufe · verarbeitet %s" % String(m.spec.input_product)))
+		v.add_child(_metric_row("Zulieferung", "%s Stück/Tag nötig" % String.num(daily_need, 1)))
+		v.add_child(_metric_row("Im Zwischenlager", "%s Stück" % String.num(input_stock, 0)))
+		# Fehlt die Zulieferung, steht die Anlage still. Das muss
+		# hier sichtbar sein, nicht nur als Symbol auf dem Gelände.
+		if m.is_operational() and input_stock < daily_need:
+			var stalled := Label.new()
+			stalled.text = "Wartet auf %s – die Vorstufe liefert nicht genug." % String(m.spec.input_product)
+			stalled.add_theme_font_size_override("font_size", 11)
+			stalled.add_theme_color_override("font_color", UI["danger"])
+			v.add_child(stalled)
+
 	# Der Buchwert: der Wert der Maschine im Anlagevermoegen.
 	v.add_child(_metric_row("Buchwert", BWLEngine.format_eur(m.book_value, 0)))
 
@@ -1042,6 +1066,68 @@ func _fill_storage(box: VBoxContainer) -> void:
 				warning.add_theme_font_size_override("font_size", 11)
 				warning.add_theme_color_override("font_color", UI["danger"])
 				box.add_child(warning)
+
+	# Zwischenlager: die Produktionsstufen sind miteinander
+	# gekoppelt. Was die Vorstufe liefert, aber die Endstufe noch
+	# nicht verarbeitet hat, liegt hier - gebundenes Kapital ohne
+	# Erloes.
+	var intermediate_products := Simulation.intermediate_products()
+	if not intermediate_products.is_empty():
+		var chain_head := Label.new()
+		chain_head.text = "PRODUKTIONSKETTE"
+		chain_head.add_theme_font_size_override("font_size", 11)
+		chain_head.add_theme_color_override("font_color", UI["text_muted"])
+		box.add_child(chain_head)
+
+		for product in intermediate_products:
+			var stock: float = Simulation.intermediate_stock(product)
+			# Tagesbedarf der Endstufe, die dieses Zwischenprodukt nutzt.
+			var daily_demand := 0.0
+			var has_consumer := false
+			for instance in Simulation.active_machines():
+				if instance.spec.input_product != product:
+					continue
+				has_consumer = true
+				daily_demand += (
+					instance.spec.capacity_units_per_year
+					/ 360.0
+					* instance.spec.input_product_per_unit
+				)
+
+			var row := Label.new()
+			row.text = "%s: %s Stück" % [
+				String(product).capitalize(), String.num(stock, 0)
+			]
+			row.add_theme_font_size_override("font_size", 12)
+			row.add_theme_color_override("font_color", UI["text"])
+			box.add_child(row)
+
+			if has_consumer and daily_demand > 0.0:
+				# Reichweite des Zwischenlagers in Tagen.
+				var chain_days := stock / daily_demand
+				var detail := Label.new()
+				detail.text = "Reichweite %d Tage · Bedarf %s Stück/Tag" % [
+					int(chain_days), String.num(daily_demand, 1)
+				]
+				detail.add_theme_font_size_override("font_size", 11)
+				detail.add_theme_color_override("font_color",
+					UI["danger"] if chain_days < 1.0 else UI["text_muted"])
+				box.add_child(detail)
+
+				# Ueberstand im Zwischenlager: die Vorstufe produziert
+				# schneller, als die Endstufe abnimmt.
+				if stock > daily_demand:
+					var note := Label.new()
+					note.text = "Rückstau: die Vorstufe produziert schneller, als abgenommen wird."
+					note.add_theme_font_size_override("font_size", 11)
+					note.add_theme_color_override("font_color", UI["warning"])
+					box.add_child(note)
+			elif not has_consumer:
+				var note := Label.new()
+				note.text = "Keine Anlage verarbeitet dieses Zwischenprodukt."
+				note.add_theme_font_size_override("font_size", 11)
+				note.add_theme_color_override("font_color", UI["danger"])
+				box.add_child(note)
 
 	# Einkauf je Materialart. Zwei Wege: sofort kaufen (die Ware ist
 	# sofort da) oder mit Lieferzeit bestellen (die Zahlung erfolgt

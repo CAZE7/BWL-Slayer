@@ -58,6 +58,14 @@ var inventory_material: float = 0.0 ## kg Material im Lager (Sonderfall ohne Typ
 ## Das ist die Grundlage der Produktionskette: Eine Förderbandlinie
 ## braucht Stahl, ein Verpackungsautomat Verpackungsmaterial.
 var material_inventory: Dictionary = {}
+## Zwischenproduktbestände: output_product -> Stückzahl
+##
+## Das ist das Lager zwischen den Produktionsstufen. Eine Folgestufe
+## kann nur produzieren, was die Vorstufe tatsaechlich geliefert hat
+## und was noch im Lager liegt. Damit wird die Produktionskette
+## wirklich gekoppelt: zu wenig Vorstufenleistung bremst die
+## Endstufe aus.
+var intermediate_inventory: Dictionary = {}
 var day_accumulator: float = 0.0
 
 ## Produktionseinstellungen (vom Spieler steuerbar)
@@ -86,6 +94,7 @@ func _ready() -> void:
 	# der ersten Investition anlaufen kann.
 	inventory_material = 0.0
 	material_inventory.clear()
+	intermediate_inventory.clear()
 	# Die Simulation startet pausiert. Der Spieler startet sie bewusst –
 	# und headless-Testläufe sollen nicht endlos ticken.
 	running = false
@@ -157,6 +166,7 @@ func reset() -> void:
 	contracts.clear()
 	inventory_material = 0.0
 	material_inventory.clear()
+	intermediate_inventory.clear()
 	economy = EconomyState.new()
 	stats = {
 		"days_simulated": 0,
@@ -316,6 +326,116 @@ func set_material_stock(material_type: StringName, quantity_kg: float) -> void:
 	_revalue_inventory()
 
 
+## Der Bestand eines Zwischenprodukts (Stückzahl).
+func intermediate_stock(product: StringName) -> float:
+	if product == &"":
+		return 0.0
+	return float(intermediate_inventory.get(product, 0.0))
+
+
+## Setzt den Bestand eines Zwischenprodukts.
+func set_intermediate_stock(product: StringName, quantity: float) -> void:
+	if product == &"":
+		return
+	intermediate_inventory[product] = maxf(0.0, quantity)
+	_revalue_inventory()
+
+
+## Die Zwischenprodukte, die im Betrieb eine Rolle spielen.
+##
+## Das sind alle Produkte, die eine Anlage herstellt (und damit eine
+## Folgestufe beliefern kann) und alle Produkte, die eine Anlage
+## braucht (und damit von einer Vorstufe beliefert werden).
+func intermediate_products() -> Array[StringName]:
+	var products: Array[StringName] = []
+	for spec in specs.values():
+		var s: MachineSpec = spec
+		if s.output_product != &"" and not products.has(s.output_product):
+			products.append(s.output_product)
+		if s.input_product != &"" and not products.has(s.input_product):
+			products.append(s.input_product)
+	return products
+
+
+## Der Kapitalwert einer Produktionskette.
+##
+## Wird die Endstufe einzeln bewertet, fehlt die Vorstufe: Ihr
+## Kapitalwert, ihre Abschreibung und ihre kalkulatorischen Zinsen
+## gehoeren aber zur Investition. Deshalb wird die Kette
+## gemeinsam gerechnet:
+##
+##   KW_Kette = -|A0_Endstufe + A0_Vorstufe|
+##              + Summe der Cashflows beider Stufen (diskontiert)
+##              + Restwerte beider Stufen
+##
+## Die Cashflows werden ueber die vorhandene Deckungsbeitragslogik
+## der Kette gebildet: Der Ketten-Deckungsbeitrag traegt die
+## Fixkosten beider Stufen, die Abschreibung beider Stufen wird
+## zurueckgerechnet, weil sie nicht zahlungswirksam ist.
+func chain_net_present_value(
+	end_stage: MachineInstance, discount_rate: float
+) -> float:
+	var producers := _chain_producers_of(end_stage)
+	var total_investment := end_stage.spec.acquisition_cost
+	for p in producers:
+		total_investment += p.spec.acquisition_cost
+
+	# Jahres-Cashflow der Kette: Deckungsbeitrag der Endstufe
+	# (inklusive der Vorstufe ueber den Ketten-Deckungsbeitrag)
+	# minus die Fixkosten beider Stufen, plus Abschreibung und
+	# kalkulatorische Zinsen beider Stufen.
+	var db := _chain_contribution_margin(end_stage.spec)
+	var end_capacity := end_stage.spec.capacity_units_per_year
+	var revenue := db * end_capacity
+	var fixed_cash := end_stage.spec.fixed_operating_costs
+	for p in producers:
+		fixed_cash += p.spec.fixed_operating_costs
+	# Abschreibung beider Stufen ist nicht zahlungswirksam.
+	var depreciation := end_stage.spec.depreciation()
+	for p in producers:
+		depreciation += p.spec.depreciation()
+	# Kalkulatorische Zinsen sind ebenfalls nicht zahlungswirksam.
+	var imputed := end_stage.spec.imputed_interest()
+	for p in producers:
+		imputed += p.spec.imputed_interest()
+
+	var cashflow := revenue - fixed_cash + depreciation + imputed
+
+	var kw := -absf(total_investment)
+	for t in range(1, end_stage.spec.useful_life_years + 1):
+		kw += cashflow / pow(1.0 + discount_rate, float(t))
+	# Restwerte im letzten Jahr
+	kw += end_stage.spec.residual_value / pow(
+		1.0 + discount_rate, float(end_stage.spec.useful_life_years)
+	)
+	for p in producers:
+		kw += p.spec.residual_value / pow(
+			1.0 + discount_rate, float(p.spec.useful_life_years)
+		)
+	return kw
+
+
+## Die Vorstufen, die eine Endstufe beliefern.
+func _chain_producers_of(end_stage: MachineInstance) -> Array[MachineInstance]:
+	var result: Array[MachineInstance] = []
+	if end_stage.spec.input_product == &"":
+		return result
+	for instance in producers_of(end_stage.spec.input_product):
+		result.append(instance)
+	return result
+
+
+## Die Anlagen, die ein Zwischenprodukt herstellen.
+func producers_of(product: StringName) -> Array[MachineInstance]:
+	var result: Array[MachineInstance] = []
+	if product == &"":
+		return result
+	for instance in active_machines():
+		if instance.spec.output_product == product:
+			result.append(instance)
+	return result
+
+
 ## Die Materialarten, die aktuell gebraucht werden.
 ##
 ## Nur die tatsaechlich benoetigten Arten werden angezeigt und
@@ -397,7 +517,38 @@ func _revalue_inventory() -> void:
 	for material_type in material_inventory:
 		total += float(material_inventory[material_type]) * material_price(StringName(material_type))
 	total += inventory_material * _average_material_price()
+	# Zwischenprodukte sind gebundenes Kapital. Bewertet werden sie
+	# mit den Herstellkosten der Vorstufe: Das ist der Wert, den das
+	# Lager wirtschaftlich darstellt. Ein fertiges Endprodukt im
+	# Lager waere noch nicht verdient, also wird es nicht bewertet.
+	for product in intermediate_inventory:
+		total += float(intermediate_inventory[product]) * _intermediate_unit_cost(StringName(product))
 	economy.inventory_value = total
+
+
+## Die Herstellkosten je Einheit eines Zwischenprodukts.
+##
+## Grundlage sind die vollstaendigen variablen Kosten der Vorstufe
+## (eigene Stueckkosten + Material) zuzueglich der anteiligen
+## Fixkosten. Das ist der kalkulatorische Wert des Zwischenlagers.
+func _intermediate_unit_cost(product: StringName) -> float:
+	var producers := producers_of(product)
+	if producers.is_empty():
+		return 0.0
+	var unit_cost := 0.0
+	var capacity := 0.0
+	for instance in producers:
+		var spec := instance.spec
+		var variable := spec.full_variable_cost_per_unit()
+		# Fixkosten anteilig auf die Kapazitaet verteilen.
+		var per_unit_fixed := 0.0
+		if spec.capacity_units_per_year > 0.0:
+			per_unit_fixed = spec.fixed_operating_costs / spec.capacity_units_per_year
+		unit_cost += (variable + per_unit_fixed) * spec.capacity_units_per_year
+		capacity += spec.capacity_units_per_year
+	if capacity <= 0.0:
+		return 0.0
+	return unit_cost / capacity
 
 
 ## Schliesst einen Rahmenvertrag mit einem Kunden.
@@ -520,12 +671,59 @@ func _weighted_contribution_margin() -> float:
 	var weighted := 0.0
 	var running: Array[MachineInstance] = active_machines()
 	for m in running:
+		# Vorstufen erzeugen kein Endprodukt. Ihr Deckungsbeitrag
+		# fliesst ueber die Zwischenproduktkosten in die Endstufe ein
+		# und darf nicht doppelt gezaehlt werden.
+		if m.spec.is_intermediate_stage():
+			continue
 		var cap := m.spec.capacity_units_per_year
 		capacity += cap
-		weighted += m.spec.contribution_margin_per_unit() * cap
+		weighted += _chain_contribution_margin(m.spec) * cap
 	if capacity <= 0.0:
 		return 0.0
 	return weighted / capacity
+
+
+## Der Deckungsbeitrag je Endprodukt-Einheit einer ganzen Kette.
+##
+## Bei einer einstufigen Anlage ist das der normale Deckungsbeitrag.
+## Bei einer Kette kommt die Wertschoepfung der Vorstufe hinzu, und
+## die Kosten der Vorstufe werden abgezogen:
+##
+##   DB_Kette = DB_Endstufe + DB_Vorstufe je Einheit
+##              - Kosten der Vorstufe je benoetigter Einheit
+##
+## Genau das ist der Unterschied zwischen einem Preisvergleich
+## ueber die Anlagen hinweg und einem echten Kettenvergleich: Die
+## Endstufe allein zu betrachten wuerde die Vorstufe als kostenlos
+## ansehen.
+func _chain_contribution_margin(spec: MachineSpec) -> float:
+	var margin := spec.contribution_margin_per_unit()
+	# Materialkosten der Endstufe abziehen – der volle DB beruecksichtigt
+	# sie bereits, der rohe nicht.
+	var material := spec.material_per_unit * spec.material_price_per_kg
+	margin -= material
+	if spec.input_product == &"":
+		return margin
+
+	# Kosten je Einheit des Zwischenprodukts aus der Vorstufe.
+	var input_cost := _intermediate_unit_cost(spec.input_product)
+	var per_unit := spec.input_product_per_unit
+	# Die Vorstufe liefert mit ihrem eigenen Deckungsbeitrag zur
+	# Wertschoepfung bei: Ihr Erloes (Preis je Einheit) minus ihrer
+	# Kosten ist der Betrag, den die Kette gegenueber dem reinen
+	# Einkauf des Zwischenprodukts gewinnt.
+	var producer_margin := 0.0
+	var producer_capacity := 0.0
+	for instance in producers_of(spec.input_product):
+		var p := instance.spec
+		producer_margin += (p.price_per_unit - p.full_variable_cost_per_unit()) * p.capacity_units_per_year
+		producer_capacity += p.capacity_units_per_year
+	if producer_capacity > 0.0:
+		producer_margin /= producer_capacity
+	margin += producer_margin * per_unit
+	margin -= input_cost * per_unit
+	return margin
 
 
 ## Schreibt die laufenden Materiallieferungen weiter.
@@ -737,39 +935,88 @@ func _average_material_price() -> float:
 func _progress_production() -> void:
 	if not production_enabled:
 		return
-	for instance_id in machines:
-		var instance: MachineInstance = machines[instance_id]
-		if not instance.is_operational():
-			continue
+	# Die Produktionskette laeuft stufenweise: zuerst die Vorstufen
+	# (sie legen ihr Zwischenprodukt ins Lager), danach die Folgestufen
+	# (sie entnehmen es wieder). Dadurch kann die Endstufe an einem
+	# Tag noch das nutzen, was die Vorstufe am selben Tag hergestellt
+	# hat – und ein Rueckstau in der Vorstufe bremst die Endstufe
+	# sichtbar aus.
+	for stage in 2:
+		for instance_id in machines:
+			var instance: MachineInstance = machines[instance_id]
+			if not instance.is_operational():
+				continue
+			# Stufe 0: Vorstufen (verbrauchen Rohmaterial, liefern
+			# Zwischenprodukt). Stufe 1: Endstufen (verbrauchen das
+			# Zwischenprodukt oder Rohmaterial).
+			var is_final := instance.spec.is_final_stage()
+			if (stage == 0) == is_final:
+				continue
+			_produce_one_day(instance)
 
-		# Tagesproduktion = Kapazität/360, gedeckelt durch Material
-		var daily_capacity := instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
-		var daily_material_needed := daily_capacity * instance.spec.material_per_unit
-		var material_type := instance.spec.material_type
-		var material_available := true
-		if daily_material_needed > 0.0:
-			# Jede Anlage verbraucht ihre eigene Materialart. Ein
-			# Bestand ersetzt keinen anderen: Wer Stahl hat, kann keine
-			# Verpackung produzieren.
-			var stock := material_stock(material_type)
-			material_available = stock >= daily_material_needed
-			if material_available:
-				set_material_stock(material_type, stock - daily_material_needed)
 
-		if not material_available:
-			# Materialengpass -> Maschine läuft im Leerlauf
-			instance.notes.append(
-				"Tag %d: Materialengpass (%s) – Anlage im Leerlauf." % [
-					day, MachineCatalog.material_label(material_type)
-				]
-			)
-			continue
+## Die Tagesproduktion einer einzelnen Anlage.
+##
+## Deckelung durch Material (Rohstoff) und durch das Zwischenprodukt
+## der Vorstufe. Fehlt eine dieser Grundlagen, laeuft die Anlage im
+## Leerlauf – mit Vermerk im Maschinenprotokoll.
+func _produce_one_day(instance: MachineInstance) -> void:
+	var daily_capacity := instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
 
-		instance.quantity_this_year += daily_capacity
-		instance.maintenance_cost += instance.spec.fixed_operating_costs / float(DAYS_PER_YEAR)
+	# 1) Rohstoff der Vorstufe
+	var material_type := instance.spec.consumed_material_type()
+	var daily_material_needed := daily_capacity * instance.spec.material_per_unit
+	var material_available := true
+	if daily_material_needed > 0.0:
+		# Jede Anlage verbraucht ihre eigene Materialart. Ein
+		# Bestand ersetzt keinen anderen: Wer Stahl hat, kann keine
+		# Verpackung produzieren.
+		var stock := material_stock(material_type)
+		material_available = stock >= daily_material_needed
+		if material_available:
+			set_material_stock(material_type, stock - daily_material_needed)
 
-		var utilization := instance.spec.utilization_at(instance.quantity_this_year)
-		stats["peak_utilization"] = maxf(float(stats["peak_utilization"]), utilization)
+	if not material_available:
+		# Materialengpass -> Maschine läuft im Leerlauf
+		instance.notes.append(
+			"Tag %d: Materialengpass (%s) – Anlage im Leerlauf." % [
+				day, MachineCatalog.material_label(material_type)
+			]
+		)
+		return
+
+	# 2) Zwischenprodukt der Vorstufe
+	var input_product := instance.spec.input_product
+	var daily_input_needed := daily_capacity * instance.spec.input_product_per_unit
+	var input_available := true
+	if input_product != &"" and daily_input_needed > 0.0:
+		var in_stock := intermediate_stock(input_product)
+		input_available = in_stock >= daily_input_needed
+		if input_available:
+			set_intermediate_stock(input_product, in_stock - daily_input_needed)
+
+	if not input_available:
+		# Die Vorstufe liefert nicht genug -> Endstufe im Leerlauf.
+		instance.notes.append(
+			"Tag %d: Vorstufe liefert zu wenig %s – Anlage im Leerlauf." % [
+				day, String(input_product)
+			]
+		)
+		return
+
+	# 3) Produktion und Weiterleitung
+	instance.quantity_this_year += daily_capacity
+	instance.maintenance_cost += instance.spec.fixed_operating_costs / float(DAYS_PER_YEAR)
+
+	# Eine Vorstufe legt ihr Erzeugnis im Zwischenlager ab. Es wird
+	# nicht bewertet wie ein Endprodukt – der Wert steckt in der
+	# Folgestufe, die es weiterverarbeitet.
+	var output_product := instance.spec.output_product
+	if output_product != &"":
+		set_intermediate_stock(output_product, intermediate_stock(output_product) + daily_capacity)
+
+	var utilization := instance.spec.utilization_at(instance.quantity_this_year)
+	stats["peak_utilization"] = maxf(float(stats["peak_utilization"]), utilization)
 
 
 ## Kundenaufträge: Annahme, Produktion, Lieferung, Zahlung.
@@ -783,13 +1030,21 @@ func _process_customer_orders() -> void:
 	if not accepting_orders:
 		return
 
-	# Tagesproduktion aller betriebsbereiten Maschinen. Sie ist die
+	# Tagesproduktion aller betriebsbereiten Endstufen. Sie ist die
 	# Menge, die an die offenen Auftraege verteilt werden kann.
+	#
+	# Nur Endstufen zaehlen: eine Vorstufe erzeugt ein Zwischenprodukt
+	# fuer die naechste Stufe, nicht Ware fuer den Kunden. Sonst
+	# waere die Kette doppelt verkauft – einmal als Zwischenprodukt
+	# und einmal als Endprodukt.
 	var daily_production := 0.0
 	for instance_id in machines:
 		var instance: MachineInstance = machines[instance_id]
-		if instance.is_operational():
-			daily_production += instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+		if not instance.is_operational():
+			continue
+		if instance.spec.is_intermediate_stage():
+			continue
+		daily_production += instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
 
 	# Forderungen einziehen, deren Zahlungsziel erreicht ist.
 	_collect_receivables()
@@ -896,9 +1151,13 @@ func _generate_demand() -> void:
 		var instance: MachineInstance = machines[instance_id]
 		if not instance.is_operational():
 			continue
+		# Nur Endstufen tragen zur Nachfrage bei: Eine Vorstufe
+		# verkauft nichts an den Markt.
+		if instance.spec.is_intermediate_stage():
+			continue
 		var cap := instance.spec.capacity_units_per_year
 		capacity += cap
-		db_weighted += instance.spec.contribution_margin_per_unit() * cap
+		db_weighted += _chain_contribution_margin(instance.spec) * cap
 		price_weighted += instance.spec.price_per_unit * cap
 	if capacity <= 0.0:
 		return
@@ -1465,6 +1724,7 @@ func to_dict() -> Dictionary:
 		"material_deliveries": material_deliveries,
 		"inventory_material": inventory_material,
 		"material_inventory": material_inventory,
+		"intermediate_inventory": intermediate_inventory,
 		"stats": stats,
 	}
 
@@ -1498,6 +1758,12 @@ func from_dict(data: Dictionary) -> void:
 	var stored: Dictionary = data.get("material_inventory", {})
 	for material_key in stored:
 		material_inventory[StringName(material_key)] = float(stored[material_key])
+	# Zwischenproduktbestände. Die Schlüssel sind Strings, weil JSON
+	# keine Schlüssel als StringName kennt.
+	intermediate_inventory = {}
+	var stored_intermediate: Dictionary = data.get("intermediate_inventory", {})
+	for product_key in stored_intermediate:
+		intermediate_inventory[StringName(product_key)] = float(stored_intermediate[product_key])
 	stats = data.get("stats", stats)
 
 

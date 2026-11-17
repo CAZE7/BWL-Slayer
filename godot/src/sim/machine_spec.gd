@@ -46,6 +46,24 @@ extends Resource
 ## bestellt. Eine Verpackungslinie braucht anderes Material als eine
 ## Förderbandlinie – das ist die Grundlage der Produktionskette.
 @export var material_type: StringName = &""
+
+# --- Mehrstufige Produktionskette ---
+## Das Zwischenprodukt, das diese Anlage herstellt.
+##
+## Leer heisst: die Anlage stellt ein Endprodukt her und gibt es
+## direkt in den Absatz. Mit einem Namen ist das Erzeugnis ein
+## Zwischenprodukt, das eine andere Anlage als Eingang braucht.
+@export var output_product: StringName = &""
+## Das Zwischenprodukt, das diese Anlage als Eingang verbraucht.
+##
+## Leer heisst: die Anlage verarbeitet Rohmaterial (siehe
+## `material_type`) zu einem Endprodukt. Mit einem Namen ist sie die
+## zweite Stufe einer Kette und kann nur produzieren, was die
+## Vorstufe tatsaechlich liefert.
+@export var input_product: StringName = &""
+## Wie viele Einheiten des Eingangsprodukts je Ausgangseinheit
+## benoetigt werden. Beispiel: 1 Fertigteil braucht 2 Halbfertigteile.
+@export var input_product_per_unit: float = 1.0
 ## Personalbedarf (Arbeitsstunden pro Jahr)
 @export var labor_hours_per_year: float = 0.0
 @export var labor_rate_per_hour: float = 0.0
@@ -191,3 +209,32 @@ func with_overrides(overrides: Dictionary) -> MachineSpec:
 	for key in overrides:
 		copy.set(key, overrides[key])
 	return copy
+
+
+## Ist diese Anlage eine Vorstufe (liefert ein Zwischenprodukt)?
+func is_intermediate_stage() -> bool:
+	return output_product != &""
+
+
+## Ist diese Anlage eine Folgestufe (braucht ein Zwischenprodukt)?
+func is_final_stage() -> bool:
+	return input_product != &""
+
+
+## Die Materialart, die diese Anlage als Rohstoff braucht.
+##
+## Eine reine Folgestufe verarbeitet nur das Zwischenprodukt der
+## Vorstufe und braucht daher kein Rohmaterial.
+func consumed_material_type() -> StringName:
+	if input_product != &"":
+		return &""
+	return material_type
+
+
+## Der Preis, den das Zwischenprodukt im Absatz erzielt.
+##
+## Wird von der Vorstufe gesetzt, wenn sie ihr Produkt an die
+## Folgestufe liefert. Ohne diesen Wert laeuft der Absatz ueber den
+## Marktpreis der Endstufe.
+func effective_output_price() -> float:
+	return price_per_unit

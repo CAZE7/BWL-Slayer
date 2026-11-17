@@ -260,8 +260,12 @@ func _create_machine_node(instance: MachineInstance) -> void:
 	# Fehlt das Material, steht die Anlage im Leerlauf. Das muss auf
 	# dem Gelände sichtbar sein, nicht nur in der Seitenleiste.
 	var material_short := _has_material_shortage(instance)
+	# Fehlt das Zwischenprodukt der Vorstufe, steht die Endstufe auch
+	# still. Das ist ein eigener Leerlaufgrund und muss auf dem
+	# Gelaende sichtbar sein.
+	var chain_short := _has_chain_shortage(instance)
 	for part in FactoryBuilder.build_machine(
-		instance.spec, instance.state, fill, material_short
+		instance.spec, instance.state, fill, material_short or chain_short
 	):
 		root.add_child(part)
 
@@ -278,6 +282,11 @@ func _create_machine_node(instance: MachineInstance) -> void:
 	# sichtbar machen muss, WELCHES Material fehlt.
 	if instance.spec.material_type != &"":
 		label.text += "  ·  " + MachineCatalog.material_label(instance.spec.material_type)
+	# Die Rolle in der Kette: Vorstufe liefert, Endstufe verarbeitet.
+	if instance.spec.is_intermediate_stage():
+		label.text += "  ·  Vorstufe"
+	elif instance.spec.is_final_stage():
+		label.text += "  ·  Endstufe"
 	label.font_size = 48
 	label.pixel_size = 0.006
 	label.position = Vector3(0, 3.4, 0)
@@ -310,6 +319,24 @@ func _has_material_shortage(instance: MachineInstance) -> bool:
 		* instance.spec.material_per_unit
 	)
 	var stock: float = Simulation.material_stock(instance.spec.material_type)
+	return stock < daily_need
+
+
+## Fehlt dieser Endstufe das Zwischenprodukt ihrer Vorstufe?
+##
+## Die Kette ist nur dann geschlossen, wenn die Vorstufe tatsaechlich
+## liefert. Fehlt das Zwischenprodukt, steht die Endstufe still –
+## unabhaengig davon, ob genug Rohmaterial da ist.
+func _has_chain_shortage(instance: MachineInstance) -> bool:
+	if not instance.is_operational():
+		return false
+	if instance.spec.input_product == &"":
+		return false
+	var daily_need := (
+		instance.spec.capacity_units_per_year / float(Simulation.DAYS_PER_YEAR)
+		* instance.spec.input_product_per_unit
+	)
+	var stock: float = Simulation.intermediate_stock(instance.spec.input_product)
 	return stock < daily_need
 
 
