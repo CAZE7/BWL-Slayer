@@ -49,14 +49,13 @@ static func _basic_spec() -> MachineSpec:
 ##
 ## Der Berater ist im Spiel ein Autoload. In einem statischen
 ## Testskript ist der Autoload-Name aber kein gueltiger Bezeichner -
-## er existiert nur zur Laufzeit. Deshalb wird die Klasse hier
-## ausdruecklich geladen. Das prueft zugleich, dass sich der
-## Berater ohne das Spiel instanziieren laesst.
-static func _advisor() -> Node:
-	var script: GDScript = load("res://src/advisor/advisor.gd")
-	if script == null:
-		return null
-	return script.new() as Node
+## er existiert nur zur Laufzeit, nicht beim Parsen. Deshalb wird
+## hier die Klasse selbst verwendet (AdvisorAgent).
+##
+## Der Vorteil: Die Rueckgabetypen der Analysemodule sind bekannt,
+## damit die Pruefungen typisiert lesbar bleiben.
+static func _advisor() -> AdvisorAgent:
+	return AdvisorAgent.new()
 
 
 ## Findet einen Hinweis nach seiner ID.

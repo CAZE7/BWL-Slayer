@@ -602,6 +602,114 @@ for (const file of files) {
 }
 
 /* ------------------------------------------------------------------
+ * 2b8. Eigene Methode auf einer Node-Variablen
+ *
+ * Godot 4.7 kann den Rueckgabetyp eines Aufrufs nicht ableiten,
+ * wenn die Variable als "Node" typisiert ist und die Methode nicht
+ * zu Node gehoert:
+ *
+ *     static func _advisor() -> Node:
+ *         return script.new() as Node
+ *
+ *     var advisor := _advisor()
+ *     var findings := advisor._analyze_utilization(list)  # Parse-Fehler
+ *
+ * Regel 2b6 deckt den Fall ab, dass ein Parameter zu schwach
+ * typisiert ist. Diese Regel deckt den Fall ab, dass eine Variable
+ * zwar per ":=" zugewiesen wurde, aber ihr Typ nicht feststeht -
+ * erkennbar daran, dass sie aus einem "as Node"-Cast oder einer
+ * Funktion mit Node-Rueckgabetyp stammt.
+ * ------------------------------------------------------------------ */
+{
+  // Die Methoden, die Godot's Node mitbringt.
+  const NODE_METHODS = new Set([
+    'add_child', 'add_to_group', 'call', 'call_deferred', 'cancel_free',
+    'duplicate', 'emit_signal', 'find_child', 'find_children', 'free',
+    'get_child', 'get_child_count', 'get_children', 'get_class',
+    'get_groups', 'get_index', 'get_meta', 'get_name', 'get_node',
+    'get_node_or_null', 'get_parent', 'get_path', 'get_path_to',
+    'get_script', 'get_tree', 'has_meta', 'has_node', 'has_signal',
+    'is_inside_tree', 'is_queued_for_deletion', 'move_child', 'propagate_call',
+    'propagate_notification', 'queue_free', 'remove_child', 'reparent',
+    'set_deferred', 'set_meta', 'set_name', 'set_process',
+    'set_process_input', 'set_process_unhandled_input', 'set_script',
+    'stop_all', 'translate_node', 'unique_name_in_owner',
+  ]);
+
+  // Eigene Methoden des Projekts mit ihrer Klasse.
+  const classMethods = new Map();
+  for (const file of files) {
+    const src = stripCode(fs.readFileSync(file, 'utf8'));
+    const cn = src.match(/^\s*class_name\s+([A-Za-z_][A-Za-z0-9_]*)/m);
+    if (!cn) continue;
+    for (const m of src.matchAll(/\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+      if (!classMethods.has(m[1])) classMethods.set(m[1], new Set());
+      classMethods.get(m[1]).add(cn[1]);
+    }
+  }
+
+  // Funktionen, die Node zurueckgeben.
+  const nodeReturning = new Set();
+  for (const file of files) {
+    const src = stripCode(fs.readFileSync(file, 'utf8'));
+    for (const m of src.matchAll(
+      /\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*->\s*Node\b/g
+    )) {
+      nodeReturning.add(m[1]);
+    }
+  }
+
+  for (const file of files) {
+    const code = stripCode(fs.readFileSync(file, 'utf8'));
+
+    // Variablen, die aus einem "as Node"-Cast stammen.
+    const castVars = new Set();
+    for (const m of code.matchAll(
+      /\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\s*:?=\s*[^=\n]*\bas\s+Node\b/g
+    )) {
+      castVars.add(m[1]);
+    }
+    // Variablen, die aus einer Node-Funktion stammen.
+    for (const m of code.matchAll(
+      /\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g
+    )) {
+      if (nodeReturning.has(m[2])) castVars.add(m[1]);
+    }
+    // Variablen, die aus einem Node-typisierten Parameter stammen.
+    const nodeParams = new Set();
+    for (const m of code.matchAll(
+      /\bfunc\s+[A-Za-z_][A-Za-z0-9_]*\s*\(([^)]*)\)\s*(?:->\s*([A-Za-z_][A-Za-z0-9_]*))?\s*:/g
+    )) {
+      for (const pm of m[1].matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*Node\b/g)) {
+        nodeParams.add(pm[1]);
+      }
+    }
+    for (const m of code.matchAll(
+      /\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/gm
+    )) {
+      if (nodeParams.has(m[2])) castVars.add(m[1]);
+    }
+
+    for (const name of castVars) {
+      for (const cm of code.matchAll(
+        new RegExp(`\\b${name}\\.([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`, 'g')
+      )) {
+        const method = cm[1];
+        if (NODE_METHODS.has(method)) continue;
+        const owners = classMethods.get(method);
+        if (!owners) continue;
+        warn(file, 1,
+          `"${name}.${method}()" – "${name}" ist als Node typisiert, ` +
+          `"${method}()" (${Array.from(owners).join(', ')}) gehoert aber ` +
+          `nicht zu Node. Der Rueckgabetyp ist damit nicht ableitbar; ` +
+          `Godot 4.7 meldet das als Parse-Fehler. ` +
+          `Die Variable mit der konkreten Klasse typisieren.`);
+      }
+    }
+  }
+}
+
+/* ------------------------------------------------------------------
  * 2b5. Aufrufe gegen die Godot-OS-API pruefen
  *
  * Godot 4 kennt kein `OS.exit()` – der Prozess wird ueber

@@ -1,6 +1,11 @@
 extends Node
+class_name AdvisorAgent
 
 ## Der Unternehmensberater.
+##
+## Wichtig: kein `class_name` "Advisor" – ein Klassenname, der einem
+## Autoload-Singleton entspricht, ist in Godot verboten. Der
+## Autoload heisst `Advisor`, die Klasse `AdvisorAgent`.
 ##
 ## Er analysiert den tatsächlichen Zustand des Unternehmens und gibt
 ## kontextbezogene Hinweise. Grundsatz aus der Spieldefinition:
@@ -929,18 +934,24 @@ func _analyze_next_steps(sim: SimulationEngine, machines: Array[MachineInstance]
 	if machines.is_empty():
 		return out
 
-	var utilization := sim.current_utilization()
+	# Die Auslastung wird aus den uebergebenen Anlagen berechnet –
+	# wie in der Auslastungsanalyse. Sonst wuerde der Fahrplan eine
+	# Zahl nennen, die zu einem anderen Betrieb gehoert.
+	var total_capacity := 0.0
+	var total_produced := 0.0
+	for m in machines:
+		total_capacity += m.spec.capacity_units_per_year
+		total_produced += m.quantity_this_year
+	var utilization := 0.0
+	if total_capacity > 0.0:
+		utilization = (total_produced / total_capacity) * 100.0
 	var economy: EconomyState = sim.economy
 
 	# 1) Erst die vorhandene Kapazitaet nutzen.
 	if utilization < 60.0:
-		var capacity := 0.0
-		for m in machines:
-			capacity += m.spec.capacity_units_per_year
+		var capacity := total_capacity
 		var target_quantity := capacity * 0.8
-		var current_quantity := 0.0
-		for m in machines:
-			current_quantity += m.quantity_this_year
+		var current_quantity := total_produced
 		out.append({
 			"id": "next_step_utilization",
 			"severity": "info",
