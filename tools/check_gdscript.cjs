@@ -636,15 +636,19 @@ for (const file of files) {
     'stop_all', 'translate_node', 'unique_name_in_owner',
   ]);
 
-  // Eigene Methoden des Projekts mit ihrer Klasse.
+  // Eigene Methoden des Projekts. Dateien ohne class_name (zum
+  // Beispiel Autoloads, die keinen Klassennamen tragen duerfen)
+  // zaehlen ueber ihren Dateinamen.
   const classMethods = new Map();
   for (const file of files) {
     const src = stripCode(fs.readFileSync(file, 'utf8'));
     const cn = src.match(/^\s*class_name\s+([A-Za-z_][A-Za-z0-9_]*)/m);
-    if (!cn) continue;
+    const label = cn
+      ? cn[1]
+      : path.basename(file).replace(/\.gd$/, '');
     for (const m of src.matchAll(/\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
       if (!classMethods.has(m[1])) classMethods.set(m[1], new Set());
-      classMethods.get(m[1]).add(cn[1]);
+      classMethods.get(m[1]).add(label);
     }
   }
 
@@ -675,6 +679,13 @@ for (const file of files) {
     )) {
       if (nodeReturning.has(m[2])) castVars.add(m[1]);
     }
+    // Variablen, die einer Node-Funktion zugewiesen werden:
+    // "var x := make()" wobei "make() -> Node" zurueckgibt.
+    for (const m of code.matchAll(
+      /\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)/g
+    )) {
+      if (nodeReturning.has(m[2])) castVars.add(m[1]);
+    }
     // Variablen, die aus einem Node-typisierten Parameter stammen.
     const nodeParams = new Set();
     for (const m of code.matchAll(
@@ -690,6 +701,16 @@ for (const file of files) {
       if (nodeParams.has(m[2])) castVars.add(m[1]);
     }
 
+    // Nur Aufrufe, deren Ergebnis zugewiesen wird, sind ein
+    // Problem: Ein Aufruf ohne Zuweisung braucht keinen ableitbaren
+    // Rueckgabetyp.
+    const assignedCalls = new Set();
+    for (const m of code.matchAll(
+      /\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g
+    )) {
+      assignedCalls.add(`${m[2]}.${m[3]}`);
+    }
+
     for (const name of castVars) {
       for (const cm of code.matchAll(
         new RegExp(`\\b${name}\\.([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`, 'g')
@@ -698,6 +719,7 @@ for (const file of files) {
         if (NODE_METHODS.has(method)) continue;
         const owners = classMethods.get(method);
         if (!owners) continue;
+        if (!assignedCalls.has(`${name}.${method}`)) continue;
         warn(file, 1,
           `"${name}.${method}()" – "${name}" ist als Node typisiert, ` +
           `"${method}()" (${Array.from(owners).join(', ')}) gehoert aber ` +

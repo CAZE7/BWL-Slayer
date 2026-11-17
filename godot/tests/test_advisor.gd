@@ -54,8 +54,19 @@ static func _basic_spec() -> MachineSpec:
 ##
 ## Der Vorteil: Die Rueckgabetypen der Analysemodule sind bekannt,
 ## damit die Pruefungen typisiert lesbar bleiben.
-static func _advisor() -> AdvisorAgent:
-	return AdvisorAgent.new()
+static func _advisor() -> Node:
+	# Der Berater ist im Spiel ein Autoload. Ein Autoload darf
+	# keinen class_name tragen - ein Klassenname, der zum Autoload
+	# gehoert, fuehrt beim Import zum Fehler. Deshalb laesst sich
+	# die Klasse hier nicht ueber ihren Namen erzeugen; sie wird
+	# stattdessen aus der Datei geladen.
+	#
+	# Die Aufrufe der Analysemodule bekommen ihren Rueckgabetyp
+	# deshalb ueber eine eigene Typannotation (Array) zugewiesen.
+	var script: GDScript = load("res://src/advisor/advisor.gd")
+	if script == null:
+		return null
+	return script.new() as Node
 
 
 ## Findet einen Hinweis nach seiner ID.
@@ -103,7 +114,7 @@ static func _test_basic_findings(t: TestFramework) -> void:
 	var spec := _basic_spec()
 	var sim := _make_sim(spec)
 	# Die Anlage hat noch nichts produziert: Auslastung 0 %.
-	var low := advisor._analyze_utilization(sim.active_machines())
+	var low: Array = advisor._analyze_utilization(sim.active_machines())
 	var finding := _find(low, "low_utilization")
 	t.check_true("Zu geringe Auslastung wird erkannt", not finding.is_empty())
 	t.check_true(
@@ -116,19 +127,34 @@ static func _test_basic_findings(t: TestFramework) -> void:
 	var sim2 := _make_sim(full)
 	var instance: MachineInstance = sim2.machines["anlage-1"]
 	instance.quantity_this_year = 9_800.0
-	var high := advisor._analyze_utilization(sim2.active_machines())
+	var high: Array = advisor._analyze_utilization(sim2.active_machines())
 	t.check_true(
 		"Kapazitätsgrenze wird erkannt",
 		not _find(high, "high_utilization").is_empty()
 	)
 
-	# Liquidität: leerer Kontenstand muss gemeldet werden.
+	# Liquidität: eine dünne Kasse muss gemeldet werden. Der
+	# Liquiditätsgrad ist die Kasse im Verhältnis zu einem Monat
+	# Fixkosten - ohne Fixkosten gibt es nichts zu decken.
 	var economy := EconomyState.new()
 	economy.cash = 1_000.0
-	var liq := advisor._analyze_liquidity(economy)
+	economy.equity = 50_000.0
+	economy.fixed_costs_year = 24_000.0
+	var liq: Array = advisor._analyze_liquidity(economy)
 	t.check_true(
-		"Leere Kasse wird erkannt",
-		not _find(liq, "low_liquidity").is_empty()
+		"Dünne Kasse wird erkannt",
+		not _find(liq, "tense_liquidity").is_empty()
+	)
+
+	# Eine ueberzogene Kasse ist der schwere Fall.
+	var crisis := EconomyState.new()
+	crisis.cash = -5_000.0
+	crisis.equity = 50_000.0
+	crisis.fixed_costs_year = 24_000.0
+	var crisis_findings: Array = advisor._analyze_liquidity(crisis)
+	t.check_true(
+		"Überzogene Kasse wird erkannt",
+		not _find(crisis_findings, "critical_liquidity").is_empty()
 	)
 
 
@@ -184,12 +210,14 @@ static func _test_demand_vs_capacity(t: TestFramework) -> void:
 		"quantity": 20_000.0,
 		"revenue": 400_000.0,
 	})
-	var over := advisor._analyze_demand_vs_capacity(sim, sim.active_machines())
+	var over: Array = advisor._analyze_demand_vs_capacity(sim, sim.active_machines())
 	var finding := _find(over, "demand_over_capacity")
 	t.check_true("Nachfrage über Kapazität wird erkannt", not finding.is_empty())
+	# Die Zahlen werden mit Tausenderpunkt geschrieben.
 	t.check_true(
 		"Der Hinweis nennt Bedarf und Kapazität",
-		String(finding.get("analysis", "")).contains("20000")
+		String(finding.get("analysis", "")).contains("20.000")
+		and String(finding.get("analysis", "")).contains("10.000")
 	)
 
 	# Kapazität übersteigt die Nachfrage deutlich.
@@ -200,7 +228,7 @@ static func _test_demand_vs_capacity(t: TestFramework) -> void:
 		"quantity": 1_000.0,
 		"revenue": 20_000.0,
 	})
-	var under := advisor._analyze_demand_vs_capacity(sim2, sim2.active_machines())
+	var under: Array = advisor._analyze_demand_vs_capacity(sim2, sim2.active_machines())
 	t.check_true(
 		"Kapazität über Nachfrage wird erkannt",
 		not _find(under, "capacity_over_demand").is_empty()
@@ -214,7 +242,7 @@ static func _test_demand_vs_capacity(t: TestFramework) -> void:
 		"quantity": 8_000.0,
 		"revenue": 160_000.0,
 	})
-	var balanced := advisor._analyze_demand_vs_capacity(sim3, sim3.active_machines())
+	var balanced: Array = advisor._analyze_demand_vs_capacity(sim3, sim3.active_machines())
 	t.check_true(
 		"Bei passender Nachfrage kein Hinweis",
 		_find(balanced, "demand_over_capacity").is_empty()
@@ -264,7 +292,7 @@ static func _test_chain_findings(t: TestFramework) -> void:
 	var only_end := MachineInstance.new(stage2, "end-1")
 	only_end.state = MachineInstance.State.ACTIVE
 	sim.machines["end-1"] = only_end
-	var missing := advisor._analyze_production_chain(sim, sim.active_machines())
+	var missing: Array = advisor._analyze_production_chain(sim, sim.active_machines())
 	t.check_true(
 		"Fehlender Zulieferer wird gemeldet",
 		not _find(missing, "chain_missing_stage").is_empty()
@@ -280,7 +308,7 @@ static func _test_chain_findings(t: TestFramework) -> void:
 	var finisher := MachineInstance.new(stage2, "end-1")
 	finisher.state = MachineInstance.State.ACTIVE
 	sim2.machines["end-1"] = finisher
-	var normal := advisor._analyze_production_chain(sim2, sim2.active_machines())
+	var normal: Array = advisor._analyze_production_chain(sim2, sim2.active_machines())
 	t.check_true(
 		"Ohne Rueckstau kein Kettenhinweis",
 		_find(normal, "chain_backlog").is_empty()
@@ -289,7 +317,7 @@ static func _test_chain_findings(t: TestFramework) -> void:
 
 	# Ueberproduktion der Vorstufe: Rueckstau im Zwischenlager.
 	sim2.set_intermediate_stock(&"halb", 50_000.0)
-	var backlog := advisor._analyze_production_chain(sim2, sim2.active_machines())
+	var backlog: Array = advisor._analyze_production_chain(sim2, sim2.active_machines())
 	t.check_true(
 		"Rückstau wird gemeldet",
 		not _find(backlog, "chain_backlog").is_empty()
@@ -308,7 +336,7 @@ static func _test_next_steps(t: TestFramework) -> void:
 
 	# Auslastung zu gering: der Fahrplan nennt die Zielmenge.
 	var sim := _make_sim(spec)
-	var low := advisor._analyze_next_steps(sim, sim.active_machines())
+	var low: Array = advisor._analyze_next_steps(sim, sim.active_machines())
 	var finding := _find(low, "next_step_utilization")
 	t.check_true(
 		"Bei geringer Auslastung nennt der Fahrplan die Auslastung",
@@ -328,7 +356,7 @@ static func _test_next_steps(t: TestFramework) -> void:
 	var instance: MachineInstance = sim2.machines["anlage-1"]
 	instance.quantity_this_year = 9_000.0
 	sim2.economy.cash = 100.0
-	var reserve := advisor._analyze_next_steps(sim2, sim2.active_machines())
+	var reserve: Array = advisor._analyze_next_steps(sim2, sim2.active_machines())
 	t.check_true(
 		"Bei dünnner Kasse nennt der Fahrplan die Reserve",
 		not _find(reserve, "next_step_liquidity").is_empty()
@@ -339,7 +367,7 @@ static func _test_next_steps(t: TestFramework) -> void:
 	var instance3: MachineInstance = sim3.machines["anlage-1"]
 	instance3.quantity_this_year = 9_000.0
 	sim3.economy.cash = 500_000.0
-	var invest := advisor._analyze_next_steps(sim3, sim3.active_machines())
+	var invest: Array = advisor._analyze_next_steps(sim3, sim3.active_machines())
 	t.check_true(
 		"Bei guter Lage nennt der Fahrplan die Investition",
 		not _find(invest, "next_step_investment").is_empty()

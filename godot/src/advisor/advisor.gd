@@ -1,11 +1,12 @@
 extends Node
-class_name AdvisorAgent
 
 ## Der Unternehmensberater.
 ##
-## Wichtig: kein `class_name` "Advisor" – ein Klassenname, der einem
-## Autoload-Singleton entspricht, ist in Godot verboten. Der
-## Autoload heisst `Advisor`, die Klasse `AdvisorAgent`.
+## Wichtig: dieses Skript darf KEIN `class_name` tragen. Ein
+## `class_name` mit demselben Namen wie ein Autoload-Singleton fuehrt
+## beim Import zum Fehler. Dasselbe gilt fuer eine andere
+## Klassennamen auf derselben Datei: Godon registriert die Datei
+## dann zweimal, und die Instanz laesst sich nicht erzeugen.
 ##
 ## Er analysiert den tatsächlichen Zustand des Unternehmens und gibt
 ## kontextbezogene Hinweise. Grundsatz aus der Spieldefinition:
