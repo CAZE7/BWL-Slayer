@@ -1392,29 +1392,39 @@ func _fill_finance(box: VBoxContainer) -> void:
 	# Ein neuer Vertrag braucht eine Anlage als Bezug.
 	var running: Array[MachineInstance] = Simulation.active_machines()
 	if not running.is_empty():
-		# Kapazitaetsgewichteter Deckungsbeitrag als Preisuntergrenze.
+		# Vertragspreis: Marktpreis der Endstufen mit 8 % Abschlag.
+		# Planungssicherheit kostet Marge – aber der Preis bleibt
+		# deutlich ueber den variablen Stueckkosten. Nur Endstufen
+		# zaehlen: Vorstufen verkaufen nichts an den Markt.
 		var total_capacity := 0.0
-		var weighted_total := 0.0
+		var weighted_price := 0.0
 		for m in running:
+			if m.spec.is_intermediate_stage():
+				continue
 			var cap := m.spec.capacity_units_per_year
 			total_capacity += cap
-			weighted_total += m.spec.contribution_margin_per_unit() * cap
-		var db: float = weighted_total / total_capacity if total_capacity > 0.0 else 0.0
+			weighted_price += m.spec.price_per_unit * cap
+		var market_price: float = (
+			weighted_price / total_capacity if total_capacity > 0.0 else 0.0
+		)
+		var unit_var: float = Simulation._weighted_unit_variable_cost()
+		var offer_price: float = maxf(market_price * 0.92, unit_var * 1.05)
 
 		var contract_button := Button.new()
 		contract_button.text = "Vertrag: 30 %% der Kapazität, 3 Jahre"
 		contract_button.custom_minimum_size = Vector2(0, 30)
 		contract_button.tooltip_text = (
-			"Mindestmenge zu festem Preis. Der Preis muss über dem "
-			+ "Deckungsbeitrag von %s liegen." % BWLEngine.format_eur(db, 2)
-		)
+			"Mindestmenge zu festem Preis: %s je Stück (Marktpreis mit "
+			+ "8 %% Abschlag – Planungssicherheit kostet Marge). "
+			+ "Untergrenze sind die variablen Stückkosten von %s."
+		) % [
+			BWLEngine.format_eur(offer_price, 2),
+			BWLEngine.format_eur(unit_var, 2),
+		]
 		contract_button.pressed.connect(func():
-			var capacity := 0.0
-			var machines: Array[MachineInstance] = Simulation.active_machines()
-			for m in machines:
-				capacity += m.spec.capacity_units_per_year
+			var capacity: float = Simulation._sales_capacity()
 			var result := Simulation.sign_contract(
-				capacity * 0.30, db * 1.10, 3
+				capacity * 0.30, offer_price, 3
 			)
 			if not bool(result.get("ok", false)):
 				EventBus.notify(

@@ -136,12 +136,20 @@ Die Kette ist der Schritt vom „zwei unabhängige Anlagen" zum
 | Kapitalwert | Der Kapitalwert einer Kette umfasst beide Stufen, nicht nur die Endstufe |
 | Sichtbarkeit | Zwischenlager in der Seitenleiste, Stufenrolle auf dem Gelände, Leerlauf bei fehlender Zulieferung |
 
-Der **Ketten-Deckungsbeitrag** ist der Deckungsbeitrag der Endstufe
-plus die Wertschöpfung der Vorstufe, abzüglich deren Kosten. Er ist
-damit **höher** als der Deckungsbeitrag der Endstufe allein – die
-Vorstufe schafft echten Mehrwert. Wer nur die Endstufe rechnet, hält
-die Vorstufe für kostenlos; genau der Fehler, den das Spiel zeigen
-soll.
+Der **Ketten-Deckungsbeitrag** ist der Marktpreis der Endstufe minus
+die variablen Kosten der **ganzen Kette** (Endstufe plus Vorstufe je
+benötigter Einheit). Der interne Verrechnungspreis kürzt sich dabei
+heraus: Was die Endstufe „zahlt“, „verdient“ die Vorstufe – ein
+reiner Durchlaufposten. Fixkosten gehören nicht in den
+Deckungsbeitrag; sie werden im Kapitalwert der Kette genau einmal
+abgezogen. Wer nur die Endstufe rechnet, hält das Zwischenprodukt
+für kostenlos und **überschätzt** den Wert – genau der Fehler, den
+das Spiel zeigen soll. Der Ketten-Kapitalwert rechnet mit der
+Engpassmenge (die Endstufe verarbeitet nur, was die Vorstufen
+liefern) und zahlungswirksam: Cashflow = Ketten-DB × Engpassmenge −
+zahlungswirksame Fixkosten beider Stufen; Planungshorizont ist die
+Nutzungsdauer der Endstufe, längerlaufende Vorstufen gehen mit ihrem
+Restbuchwert am Horizont ein.
 
 Die Kapazitäten sind aufeinander abgestimmt: Eine Endstufe braucht
 2 × 36 000 = 72 000 Halbfertigteile, eine Vorstufe liefert genau

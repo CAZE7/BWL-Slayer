@@ -559,7 +559,9 @@ func _analyze_contracts(sim: SimulationEngine) -> Array:
 		return out
 
 	var contracted := sim.contracted_quantity()
-	var capacity: float = sim._total_capacity()
+	# Nur Endstufen verkaufen an den Markt: Die Vorstufenkapazitaet
+	# wuerde den gebundenen Anteil kuenstlich kleinrechnen.
+	var capacity: float = sim._sales_capacity()
 	if capacity <= 0.0:
 		return out
 
@@ -590,30 +592,62 @@ func _analyze_contracts(sim: SimulationEngine) -> Array:
 			"action": "Öffne den Finanzbereich und prüfe die Verträge.",
 		})
 
-	# Ein Vertrag unter dem Deckungsbeitrag waere ein Verlust.
+	# Ein Vertrag, dessen Stueck-Deckungsbeitrag (Preis minus
+	# variable Kosten) unter dem ueblichen Deckungsbeitrag liegt,
+	# bindet Kapazitaet unter Wert. Verglichen werden Margen mit
+	# Margen – nicht ein Preis mit einer Marge, das waere ein
+	# Kategorienfehler.
 	var db: float = sim._weighted_contribution_margin()
+	var unit_var: float = sim._weighted_unit_variable_cost()
 	for contract in contracts:
 		var price := float(contract.get("price_per_unit", 0.0))
-		if db > 0.0 and price < db:
+		var contract_db := price - unit_var
+		if contract_db < 0.0:
 			out.append({
 				"id": "contract_loss_%s" % String(contract.get("id", "")),
-				"severity": "warning",
-				"title": "Vertrag unter dem Deckungsbeitrag",
+				"severity": "critical",
+				"title": "Vertrag unter den variablen Kosten",
 				"analysis": (
-					"Der Vertrag %s liefert %s € je Stück, der Deckungsbeitrag "
-					+ "beträgt aber nur %s €. Jedes Stück verliert damit Geld."
+					"Der Vertrag %s bringt %s € je Stück, die variablen "
+					+ "Kosten betragen aber %s €. Jedes Stück verliert "
+					+ "damit bares Geld."
 				) % [
 					String(contract.get("customer", "Vertrag")),
 					_format_eur(price),
-					_format_eur(db),
+					_format_eur(unit_var),
 				],
 				"questions": [
 					"Wie viel verliert das Unternehmen an jedem Stück?",
-					"Wie viel Stück müssen verkauft werden, um den Verlust zu decken?",
+					"Was kostet die Kündigung im Vergleich zum laufenden Verlust?",
 				],
 				"lesson": (
-					"Ein Vertrag unter dem Deckungsbeitrag ist kein sicherer "
-					+ "Umsatz, sondern ein sicherer Verlust."
+					"Ein Preis unter den variablen Kosten ist kein sicherer "
+					+ "Umsatz, sondern ein sicherer Verlust je Stück."
+				),
+				"action": "Prüfe die Verträge im Finanzbereich.",
+			})
+		elif db > 0.0 and contract_db < db:
+			out.append({
+				"id": "contract_margin_%s" % String(contract.get("id", "")),
+				"severity": "warning",
+				"title": "Vertrag unter dem üblichen Deckungsbeitrag",
+				"analysis": (
+					"Der Vertrag %s bringt einen Deckungsbeitrag von %s € "
+					+ "je Stück, im freien Verkauf sind es %s €. Die "
+					+ "gebundene Kapazität wäre am Markt mehr wert."
+				) % [
+					String(contract.get("customer", "Vertrag")),
+					_format_eur(contract_db),
+					_format_eur(db),
+				],
+				"questions": [
+					"Wie viel Deckungsbeitrag entgeht je Stück gegenüber dem freien Verkauf?",
+					"Rechtfertigt die Planungssicherheit diesen Abschlag?",
+				],
+				"lesson": (
+					"Ein Vertrag über den variablen Kosten trägt zu den "
+					+ "Fixkosten bei – aber Planungssicherheit hat einen "
+					+ "Preis: die Differenz zum üblichen Deckungsbeitrag."
 				),
 				"action": "Prüfe die Verträge im Finanzbereich.",
 			})
@@ -1011,13 +1045,16 @@ func _analyze_next_steps(sim: SimulationEngine, machines: Array[MachineInstance]
 		var rate := spec.effective_interest_rate()
 		var npv := m.net_present_value(rate)
 		var investment := spec.acquisition_cost
-		# Bei einer Kette zaehlt die Vorstufe mit: Sie ist Teil
-		# derselben Investitionsentscheidung.
+		# Bei einer Kette zaehlen die Vorstufen mit: Sie sind Teil
+		# derselben Investitionsentscheidung. Der Ketten-Kapitalwert
+		# ersetzt den Einzelwert – er wird genau EINMAL gerechnet,
+		# egal wie viele Vorstufen liefern.
 		if spec.input_product != &"":
 			var producers := sim.producers_of(spec.input_product)
-			for p in producers:
-				investment += p.spec.acquisition_cost
-				npv += sim.chain_net_present_value(m, rate) - m.net_present_value(rate)
+			if not producers.is_empty():
+				npv = sim.chain_net_present_value(m, rate)
+				for p in producers:
+					investment += p.spec.acquisition_cost
 		if investment <= 0.0:
 			continue
 		var ratio := npv / investment

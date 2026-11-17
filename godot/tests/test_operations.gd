@@ -1037,8 +1037,10 @@ static func _test_material_types(t: TestFramework) -> void:
 
 # ------------------------------------------------------------------
 # Rahmenvertraege sichern Nachfrage - aber nur zu einem Preis, der
-# den Deckungsbeitrag deckt. Ein Vertrag unter dem Deckungsbeitrag
-# waere ein Verlust auf jedem Stueck und wird abgelehnt.
+# mindestens die variablen Stueckkosten deckt. Darunter waere jeder
+# Vertrag ein Verlust auf jedem Stueck und wird abgelehnt. Preise
+# zwischen variablen Kosten und ueblichem Deckungsbeitrag sind
+# erlaubt (Deckungsbeitragsrechnung) - der Berater warnt dann.
 # ------------------------------------------------------------------
 static func _test_contracts(t: TestFramework) -> void:
 	var spec := _make_spec(&"VERTR", 1000.0, 1000.0, 20.0, 60.0, 10000.0)
@@ -1054,11 +1056,30 @@ static func _test_contracts(t: TestFramework) -> void:
 	t.check_approx(
 		"Deckungsbeitrag korrekt", sim._weighted_contribution_margin(), 40.0, 0.01
 	)
+	# Die Preisuntergrenze sind die variablen Kosten: 20 EUR.
+	t.check_approx(
+		"Variable Stueckkosten korrekt",
+		sim._weighted_unit_variable_cost(),
+		20.0,
+		0.01
+	)
 
-	# Ein Preis unter dem Deckungsbeitrag wird abgelehnt.
-	var too_low := sim.sign_contract(1_000.0, 30.0, 3)
-	t.check_true("Preis unter Deckungsbeitrag abgelehnt", not bool(too_low.get("ok", false)))
+	# Ein Preis unter den variablen Kosten wird abgelehnt: Verlust
+	# auf jedem Stueck.
+	var too_low := sim.sign_contract(1_000.0, 15.0, 3)
+	t.check_true("Preis unter variablen Kosten abgelehnt", not bool(too_low.get("ok", false)))
 	t.check_true("Kein Vertrag angelegt", sim.contracts.is_empty())
+
+	# Ein Preis zwischen variablen Kosten und ueblichem
+	# Deckungsbeitrag ist zulaessig: Er traegt 10 EUR je Stueck zu
+	# den Fixkosten bei. Ob das klug ist, bewertet der Berater -
+	# nicht die Engine.
+	var marginal := sim.sign_contract(1_000.0, 30.0, 3)
+	t.check_true("Preis ueber variablen Kosten zulaessig", bool(marginal.get("ok", false)))
+	var marginal_id := String(sim.contracts[0].get("id", ""))
+	var cancelled := sim.terminate_contract(marginal_id)
+	t.check_true("Grenzvertrag wieder kuendbar", bool(cancelled.get("ok", false)))
+	t.check_true("Grenzvertrag entfernt", sim.contracts.is_empty())
 
 	# Eine Menge ueber der Kapazitaet wird abgelehnt.
 	var too_much := sim.sign_contract(1_000_000.0, 50.0, 3)
@@ -1071,10 +1092,12 @@ static func _test_contracts(t: TestFramework) -> void:
 	t.check_approx(
 		"Gesicherte Menge korrekt", sim.contracted_quantity(), 3_000.0, 0.01
 	)
+	# Gesicherter Deckungsbeitrag = Menge x (Preis - variable
+	# Stueckkosten) = 3000 x (50 - 20) = 90.000 EUR p.a.
 	t.check_approx(
 		"Gesicherter Deckungsbeitrag korrekt",
 		sim.contracted_margin(),
-		3_000.0 * 10.0,
+		3_000.0 * 30.0,
 		0.01
 	)
 
@@ -1313,20 +1336,35 @@ static func _test_chain_economics(t: TestFramework) -> void:
 	finisher.state = MachineInstance.State.ACTIVE
 	sim.machines["end-1"] = finisher
 
-	# Der Ketten-Deckungsbeitrag ist der Deckungsbeitrag der Endstufe
-	# PLUS die Wertschoepfung der Vorstufe. Er ist deshalb hoeher als
-	# der der Endstufe allein – die Vorstufe erzeugt echten Mehrwert.
-	# Entscheidend ist, dass die Endstufe allein diesen Beitrag gar
-	# nicht erbringen kann: ohne Vorstufe gibt es keine Ware.
+	# Der Ketten-Deckungsbeitrag ist der Marktpreis der Endstufe
+	# minus die variablen Kosten der GANZEN Kette:
+	#   18 - 3 (Endstufe) - 2 x 4 (Vorstufe) = 7 EUR je Stueck.
+	# Der interne Verrechnungspreis (21 EUR) kuerzt sich heraus:
+	# Was die Endstufe "zahlt", "verdient" die Vorstufe.
 	var chain_db := sim._weighted_contribution_margin()
-	var end_alone := stage2.contribution_margin_per_unit()
-	t.check_true(
-		"Ketten-Deckungsbeitrag ist positiv",
-		chain_db > 0.0
+	t.check_approx(
+		"Ketten-Deckungsbeitrag exakt (18 - 3 - 2x4)",
+		chain_db,
+		7.0,
+		0.0001
+	)
+	t.check_approx(
+		"Variable Kosten der Kette exakt (3 + 2x4)",
+		sim._chain_variable_cost(stage2),
+		11.0,
+		0.0001
+	)
+	# Eigenfertigung schlaegt Zukauf: Wuerde die Endstufe das
+	# Zwischenprodukt zum Verrechnungspreis einkaufen, waere der
+	# Deckungsbeitrag 18 - 3 - 2 x 21 = -27 EUR. Die eigene
+	# Vorstufe produziert fuer 4 statt 21 EUR je Einheit.
+	var buy_db := (
+		stage2.price_per_unit - stage2.variable_cost_per_unit
+		- stage2.input_product_per_unit * stage1.price_per_unit
 	)
 	t.check_true(
-		"Vorstufe steuert Wertschoepfung bei",
-		chain_db > end_alone
+		"Eigenfertigung schlaegt Zukauf zum Verrechnungspreis",
+		chain_db > buy_db
 	)
 	t.check_true(
 		"Endstufe allein ist keine Alternative zur Kette",
@@ -1349,14 +1387,40 @@ static func _test_chain_economics(t: TestFramework) -> void:
 		"Teurere Vorstufe senkt den Ketten-Deckungsbeitrag",
 		sim2._weighted_contribution_margin() < chain_db
 	)
+	# Mit 12 EUR variablen Kosten der Vorstufe kippt die Kette:
+	# 18 - 3 - 2 x 12 = -9 EUR je Stueck.
+	t.check_approx(
+		"Teure Vorstufe exakt (18 - 3 - 2x12)",
+		sim2._weighted_contribution_margin(),
+		-9.0,
+		0.0001
+	)
 
-	# Der Kapitalwert der Kette umfasst beide Stufen. Die Endstufe
-	# allein waere zu niedrig bewertet, weil die Vorstufe fehlt.
+	# Der Kapitalwert der Kette umfasst beide Stufen und wird
+	# zahlungswirksam gerechnet:
+	#   Engpassmenge = min(36000, 36000 / 2) = 18000 Stueck
+	#   Cashflow = 7 x 18000 - (8000 + 5400) = 112.600 EUR p.a.
+	#   KW = -64000 + Summe Cashflow / 1.084^t   (t = 1..4)
+	# Restwerte sind 0 (beide Stufen ohne Restwert, gleiche
+	# Nutzungsdauer wie der Planungshorizont der Endstufe).
 	var kw_chain: float = sim.chain_net_present_value(finisher, 0.084)
+	var expected_cf := 7.0 * 18_000.0 - (8_000.0 + 5_400.0)
+	var expected_kw := -(40_000.0 + 24_000.0)
+	for year in range(1, 5):
+		expected_kw += expected_cf / pow(1.084, float(year))
+	t.check_approx(
+		"Ketten-Kapitalwert exakt (Engpass, zahlungswirksam)",
+		kw_chain,
+		expected_kw,
+		0.01
+	)
+	# Die Endstufe ALLEIN gerechnet ueberschaetzt den Wert: Sie tut
+	# so, als kaeme das Zwischenprodukt kostenlos. Der ehrliche
+	# Kettenwert liegt darunter.
 	var kw_end_only: float = finisher.net_present_value(0.084)
 	t.check_true(
-		"Ketten-Kapitalwert schliesst die Vorstufe ein",
-		kw_chain > kw_end_only
+		"Endstufe allein gerechnet ueberschaetzt den Wert",
+		kw_end_only > kw_chain
 	)
 	# Der Kapitalwert muss mit dem Kapitaleinsatz verglichen werden:
 	# eine Kette, die mehr einbringt als sie kostet, schafft Wert.

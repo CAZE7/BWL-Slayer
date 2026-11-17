@@ -51,6 +51,10 @@ var material_deliveries: Array = [] ## laufende Materiallieferungen
 ## ab. Das macht die Nachfrage planbar – aber der Preis liegt
 ## fest. Wer zu billig verkauft, bindet Kapital auf Jahre.
 var contracts: Array = []
+## Laufende Nummer fuer Vertrags-IDs. Nur der Tag allein waere
+## nicht eindeutig: Zwei Vertraege am selben Tag bekaemen dieselbe
+## ID, und eine Kuendigung traefe den falschen Vertrag.
+var contract_sequence: int = 0
 var inventory_material: float = 0.0 ## kg Material im Lager (Sonderfall ohne Typ)
 ## Die Materialbestände je Materialart: material_type -> kg
 ##
@@ -164,6 +168,7 @@ func reset() -> void:
 	deliveries.clear()
 	material_deliveries.clear()
 	contracts.clear()
+	contract_sequence = 0
 	inventory_material = 0.0
 	material_inventory.clear()
 	intermediate_inventory.clear()
@@ -371,59 +376,71 @@ func intermediate_products() -> Array[StringName]:
 
 ## Der Kapitalwert einer Produktionskette.
 ##
-## Wird die Endstufe einzeln bewertet, fehlt die Vorstufe: Ihr
-## Kapitalwert, ihre Abschreibung und ihre kalkulatorischen Zinsen
-## gehoeren aber zur Investition. Deshalb wird die Kette
+## Wird die Endstufe einzeln bewertet, fehlt die Vorstufe: Ihre
+## Anschaffung, ihre variablen Kosten und ihre Fixkosten gehoeren
+## aber zur selben Investitionsentscheidung. Deshalb wird die Kette
 ## gemeinsam gerechnet:
 ##
-##   KW_Kette = -|A0_Endstufe + A0_Vorstufe|
-##              + Summe der Cashflows beider Stufen (diskontiert)
-##              + Restwerte beider Stufen
+##   KW_Kette = -|A0_Endstufe + A0_Vorstufen|
+##              + Summe Cashflow_Kette / (1+i)^t
+##              + Restwerte am Ende des Planungshorizonts
 ##
-## Die Cashflows werden ueber die vorhandene Deckungsbeitragslogik
-## der Kette gebildet: Der Ketten-Deckungsbeitrag traegt die
-## Fixkosten beider Stufen, die Abschreibung beider Stufen wird
-## zurueckgerechnet, weil sie nicht zahlungswirksam ist.
+## Der Jahres-Cashflow der Kette ist zahlungswirksam gerechnet:
+##
+##   Cashflow = DB_Kette x Engpassmenge
+##              - zahlungswirksame Fixkosten beider Stufen
+##
+## Abschreibung und kalkulatorische Zinsen tauchen hier bewusst
+## NICHT auf: Der Ketten-Deckungsbeitrag enthaelt nur variable
+## Kosten, abgezogen werden nur die zahlungswirksamen
+## Betriebsfixkosten. Damit gilt dieselbe Identitaet wie bei der
+## Einzelanlage (Cashflow = DB x Menge - zahlungswirksame Fixkosten,
+## vgl. MachineSpec.annual_cashflow_at: Gewinn + AfA + kalk. Zinsen
+## kuerzt sich genau auf diesen Ausdruck).
+##
+## Die Menge ist die Engpassmenge: Die Kette produziert nur so
+## viel, wie die schwaechste Stufe hergibt (Vorstufenkapazitaet
+## geteilt durch den Einsatzfaktor, gedeckelt von der Endstufe).
+##
+## Planungshorizont ist die Nutzungsdauer der Endstufe. Vorstufen,
+## die laenger laufen, gehen mit ihrem Restbuchwert am Horizont ein;
+## Vorstufen, die kuerzer laufen, mit ihrem Restwert.
 func chain_net_present_value(
 	end_stage: MachineInstance, discount_rate: float
 ) -> float:
 	var producers := _chain_producers_of(end_stage)
-	var total_investment := end_stage.spec.acquisition_cost
+	var spec := end_stage.spec
+	var total_investment := spec.acquisition_cost
 	for p in producers:
 		total_investment += p.spec.acquisition_cost
 
-	# Jahres-Cashflow der Kette: Deckungsbeitrag der Endstufe
-	# (inklusive der Vorstufe ueber den Ketten-Deckungsbeitrag)
-	# minus die Fixkosten beider Stufen, plus Abschreibung und
-	# kalkulatorische Zinsen beider Stufen.
-	var db := _chain_contribution_margin(end_stage.spec)
-	var end_capacity := end_stage.spec.capacity_units_per_year
-	var revenue := db * end_capacity
-	var fixed_cash := end_stage.spec.fixed_operating_costs
-	for p in producers:
-		fixed_cash += p.spec.fixed_operating_costs
-	# Abschreibung beider Stufen ist nicht zahlungswirksam.
-	var depreciation := end_stage.spec.depreciation()
-	for p in producers:
-		depreciation += p.spec.depreciation()
-	# Kalkulatorische Zinsen sind ebenfalls nicht zahlungswirksam.
-	var imputed := end_stage.spec.imputed_interest()
-	for p in producers:
-		imputed += p.spec.imputed_interest()
+	# Engpassmenge der Kette: die Endstufe kann nur verarbeiten,
+	# was die Vorstufen liefern.
+	var output := spec.capacity_units_per_year
+	if spec.input_product != &"" and spec.input_product_per_unit > 0.0:
+		var supply := 0.0
+		for p in producers:
+			supply += p.spec.capacity_units_per_year
+		output = minf(output, supply / spec.input_product_per_unit)
 
-	var cashflow := revenue - fixed_cash + depreciation + imputed
+	var db := _chain_contribution_margin(spec)
+	var fixed_cash := spec.cash_fixed_costs()
+	for p in producers:
+		fixed_cash += p.spec.cash_fixed_costs()
+	var cashflow := db * output - fixed_cash
 
+	var horizon := spec.useful_life_years
 	var kw := -absf(total_investment)
-	for t in range(1, end_stage.spec.useful_life_years + 1):
+	for t in range(1, horizon + 1):
 		kw += cashflow / pow(1.0 + discount_rate, float(t))
-	# Restwerte im letzten Jahr
-	kw += end_stage.spec.residual_value / pow(
-		1.0 + discount_rate, float(end_stage.spec.useful_life_years)
-	)
+	# Restwerte am Ende des Planungshorizonts: die Endstufe mit
+	# ihrem Restwert, jede Vorstufe mit ihrem Restbuchwert (linear;
+	# ist ihre Nutzungsdauer kuerzer, bleibt genau der Restwert).
+	var terminal := spec.residual_value
 	for p in producers:
-		kw += p.spec.residual_value / pow(
-			1.0 + discount_rate, float(p.spec.useful_life_years)
-		)
+		var producer: MachineInstance = p
+		terminal += producer.book_value_after(horizon)
+	kw += terminal / pow(1.0 + discount_rate, float(horizon))
 	return kw
 
 
@@ -579,18 +596,25 @@ func sign_contract(
 	if years <= 0:
 		return {"ok": false, "error": "Die Vertragsdauer muss mindestens ein Jahr betragen."}
 
-	# Der Preis muss mindestens den Deckungsbeitrag decken. Sonst
-	# verliert das Unternehmen an jedem Stueck Geld.
-	var db := _weighted_contribution_margin()
-	if db > 0.0 and price_per_unit < db:
+	# Der Preis muss mindestens die variablen Stueckkosten decken.
+	# Darunter verliert das Unternehmen bares Geld an jedem Stueck –
+	# ein solcher Vertrag wird abgelehnt. Preise zwischen den
+	# variablen Kosten und dem ueblichen Deckungsbeitrag sind
+	# dagegen zulaessig: Nach der Deckungsbeitragsrechnung traegt
+	# jeder Euro ueber den variablen Kosten zu den Fixkosten bei.
+	# Ob das strategisch klug ist, bewertet der Berater.
+	var floor_cost := _weighted_unit_variable_cost()
+	if floor_cost > 0.0 and price_per_unit < floor_cost:
 		return {
 			"ok": false,
-			"error": "Der Preis liegt unter dem Deckungsbeitrag von %s €. Das wäre ein Verlust auf jedem Stück." % _format_int(db),
+			"error": "Der Preis liegt unter den variablen Stückkosten von %s €. Das wäre ein Verlust auf jedem Stück." % _format_int(floor_cost),
 		}
 
-	# Der Vertrag darf nicht mehr versprechen als die Kapazitaet
-	# hergibt – sonst ist er von Anfang an unerfuellbar.
-	var capacity := _total_capacity()
+	# Der Vertrag darf nicht mehr versprechen als die
+	# Absatzkapazitaet hergibt – sonst ist er von Anfang an
+	# unerfuellbar. Vorstufen zaehlen nicht mit: Sie verkaufen
+	# nichts an den Markt.
+	var capacity := _sales_capacity()
 	if capacity > 0.0 and quantity_per_year > capacity * 1.5:
 		return {
 			"ok": false,
@@ -599,8 +623,9 @@ func sign_contract(
 			],
 		}
 
+	contract_sequence += 1
 	var contract := {
-		"id": "vertrag-%d" % day,
+		"id": "vertrag-%d-%d" % [day, contract_sequence],
 		"customer": "Rahmenvertrag %d" % (1 + day % 5),
 		"quantity_per_year": quantity_per_year,
 		"price_per_unit": price_per_unit,
@@ -672,11 +697,17 @@ func contracted_quantity() -> float:
 
 
 ## Die gesicherte Nachfrage aus Verträgen (Deckungsbeitrag p.a.).
+##
+## Deckungsbeitrag je Stueck = Vertragspreis minus variable
+## Stueckkosten. Der fruehere Abzug des Deckungsbeitrags vom Preis
+## war ein Kategorienfehler: Ein Preis wird mit Kosten verglichen,
+## nicht mit einer anderen Marge.
 func contracted_margin() -> float:
+	var unit_cost := _weighted_unit_variable_cost()
 	var total := 0.0
 	for contract in contracts:
 		total += float(contract.get("quantity_per_year", 0.0)) * (
-			float(contract.get("price_per_unit", 0.0)) - _weighted_contribution_margin()
+			float(contract.get("price_per_unit", 0.0)) - unit_cost
 		)
 	return total
 
@@ -686,6 +717,21 @@ func _total_capacity() -> float:
 	var capacity := 0.0
 	var running: Array[MachineInstance] = active_machines()
 	for m in running:
+		capacity += m.spec.capacity_units_per_year
+	return capacity
+
+
+## Die Absatzkapazität: nur Endstufen verkaufen an den Markt.
+##
+## Eine Vorstufe stellt Zwischenprodukte her – ihre Kapazität darf
+## bei Verträgen über Endprodukte nicht mitzählen, sonst verspricht
+## das Unternehmen Mengen, die es nie liefern kann.
+func _sales_capacity() -> float:
+	var capacity := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		if m.spec.is_intermediate_stage():
+			continue
 		capacity += m.spec.capacity_units_per_year
 	return capacity
 
@@ -711,44 +757,64 @@ func _weighted_contribution_margin() -> float:
 
 ## Der Deckungsbeitrag je Endprodukt-Einheit einer ganzen Kette.
 ##
-## Bei einer einstufigen Anlage ist das der normale Deckungsbeitrag.
-## Bei einer Kette kommt die Wertschoepfung der Vorstufe hinzu, und
-## die Kosten der Vorstufe werden abgezogen:
+## Bei einer einstufigen Anlage ist das der volle Deckungsbeitrag
+## (Marktpreis minus variable Kosten inkl. Material). Bei einer
+## Kette kommen die variablen Kosten der Vorstufe hinzu:
 ##
-##   DB_Kette = DB_Endstufe + DB_Vorstufe je Einheit
-##              - Kosten der Vorstufe je benoetigter Einheit
+##   DB_Kette = Marktpreis der Endstufe
+##              - variable Kosten der Kette je Endprodukt-Einheit
 ##
-## Genau das ist der Unterschied zwischen einem Preisvergleich
-## ueber die Anlagen hinweg und einem echten Kettenvergleich: Die
-## Endstufe allein zu betrachten wuerde die Vorstufe als kostenlos
-## ansehen.
+## Der interne Verrechnungspreis der Vorstufe kuerzt sich innerhalb
+## der Kette heraus: Was die Endstufe "zahlt", "verdient" die
+## Vorstufe – ein reiner Durchlaufposten, der den Kettenbeitrag
+## nicht veraendern darf.
+##
+## Fixkosten gehoeren NICHT in den Deckungsbeitrag. Sie werden
+## dort abgezogen, wo absolut gerechnet wird (Kapitalwert,
+## Break-even) – sonst wuerden sie doppelt gezaehlt.
 func _chain_contribution_margin(spec: MachineSpec) -> float:
-	var margin := spec.contribution_margin_per_unit()
-	# Materialkosten der Endstufe abziehen – der volle DB beruecksichtigt
-	# sie bereits, der rohe nicht.
-	var material := spec.material_per_unit * spec.material_price_per_kg
-	margin -= material
-	if spec.input_product == &"":
-		return margin
+	return spec.price_per_unit - _chain_variable_cost(spec)
 
-	# Kosten je Einheit des Zwischenprodukts aus der Vorstufe.
-	var input_cost := _intermediate_unit_cost(spec.input_product)
-	var per_unit := spec.input_product_per_unit
-	# Die Vorstufe liefert mit ihrem eigenen Deckungsbeitrag zur
-	# Wertschoepfung bei: Ihr Erloes (Preis je Einheit) minus ihrer
-	# Kosten ist der Betrag, den die Kette gegenueber dem reinen
-	# Einkauf des Zwischenprodukts gewinnt.
-	var producer_margin := 0.0
+
+## Die variablen Kosten je Endprodukt-Einheit einer Kette.
+##
+## Eigene variable Kosten der Stufe (inkl. Material) plus die
+## kapazitaetsgewichteten variablen Kosten der Vorstufen je
+## benoetigter Zwischenprodukt-Einheit.
+func _chain_variable_cost(spec: MachineSpec) -> float:
+	var variable := spec.full_variable_cost_per_unit()
+	if spec.input_product == &"":
+		return variable
+	var producer_cost := 0.0
 	var producer_capacity := 0.0
 	for instance in producers_of(spec.input_product):
 		var p := instance.spec
-		producer_margin += (p.price_per_unit - p.full_variable_cost_per_unit()) * p.capacity_units_per_year
+		producer_cost += p.full_variable_cost_per_unit() * p.capacity_units_per_year
 		producer_capacity += p.capacity_units_per_year
 	if producer_capacity > 0.0:
-		producer_margin /= producer_capacity
-	margin += producer_margin * per_unit
-	margin -= input_cost * per_unit
-	return margin
+		producer_cost /= producer_capacity
+	return variable + producer_cost * spec.input_product_per_unit
+
+
+## Kapazitaetsgewichtete variable Kosten je Endprodukt-Einheit
+## ueber alle betriebsbereiten Endstufen.
+##
+## Das ist die Preisuntergrenze der Deckungsbeitragsrechnung:
+## Jeder Preis darueber traegt zu den Fixkosten bei, jeder Preis
+## darunter ist ein Verlust auf jedem Stueck.
+func _weighted_unit_variable_cost() -> float:
+	var capacity := 0.0
+	var weighted := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		if m.spec.is_intermediate_stage():
+			continue
+		var cap := m.spec.capacity_units_per_year
+		capacity += cap
+		weighted += _chain_variable_cost(m.spec) * cap
+	if capacity <= 0.0:
+		return 0.0
+	return weighted / capacity
 
 
 ## Schreibt die laufenden Materiallieferungen weiter.
@@ -1172,6 +1238,7 @@ func _generate_demand() -> void:
 	var capacity := 0.0
 	var db_weighted := 0.0
 	var price_weighted := 0.0
+	var var_weighted := 0.0
 	for instance_id in machines:
 		var instance: MachineInstance = machines[instance_id]
 		if not instance.is_operational():
@@ -1184,10 +1251,12 @@ func _generate_demand() -> void:
 		capacity += cap
 		db_weighted += _chain_contribution_margin(instance.spec) * cap
 		price_weighted += instance.spec.price_per_unit * cap
+		var_weighted += _chain_variable_cost(instance.spec) * cap
 	if capacity <= 0.0:
 		return
 	var db: float = db_weighted / capacity
 	var price_hint: float = price_weighted / capacity
+	var unit_var: float = var_weighted / capacity
 
 	# Ein Auftrag alle X Tage. Je groesser die Kapazitaet, desto
 	# oefter kommt ein Auftrag.
@@ -1224,16 +1293,16 @@ func _generate_demand() -> void:
 	if contracted > 0.0:
 		quantity += contracted
 
-	# Der Preis: Deckungsbeitrag plus Marge. Uebersteigt er den
-	# Deckungsbeitrag deutlich, ist der Auftrag nicht mehr sinnvoll.
-	var margin := 0.15
-	var price := db * (1.0 + margin)
-	if price_hint > 0.0:
-		# Der Preis orientiert sich am Marktpreis der Anlage, bleibt
-		# aber so, dass eine Marge ueber den Fixkosten moeglich ist.
-		price = maxf(price, db * 1.05)
+	# Der Preis: variable Kosten plus eine Marge aus dem
+	# Deckungsbeitrag, gedeckelt vom Marktpreis der Anlagen.
+	# Die Untergrenze sind die variablen Stueckkosten: Kein Markt
+	# bietet dauerhaft Auftraege an, bei denen jedes Stueck bares
+	# Geld verliert – das waere eine Falle ohne Lerneffekt.
+	var price := maxf(db * 1.15, unit_var * 1.05)
+	if price_hint > unit_var:
+		# Der Preis orientiert sich am Marktpreis der Anlagen.
 		price = minf(price, price_hint)
-	if price <= db:
+	if price <= unit_var:
 		# Unrentabel: der Auftrag wird gar nicht erst angeboten.
 		return
 
@@ -1753,6 +1822,7 @@ func to_dict() -> Dictionary:
 		"deliveries": deliveries,
 		"material_deliveries": material_deliveries,
 		"contracts": contracts,
+		"contract_sequence": contract_sequence,
 		"inventory_material": inventory_material,
 		"material_inventory": material_inventory,
 		"intermediate_inventory": intermediate_inventory,
@@ -1786,6 +1856,9 @@ func from_dict(data: Dictionary) -> void:
 	# Abnahmemenge ueberlebt den Neustart, sonst waere der Vertrag
 	# fuer den Spieler wertlos.
 	contracts = data.get("contracts", [])
+	# Die laufende Vertragsnummer muss mitwandern, sonst kollidieren
+	# neue Vertrags-IDs nach dem Laden mit bestehenden.
+	contract_sequence = int(data.get("contract_sequence", contracts.size()))
 	inventory_material = float(data.get("inventory_material", 0.0))
 	# Die Materialbestände je Art. Die Schluessel sind Strings, weil
 	# JSON keine Schluessel als StringName kennt.
