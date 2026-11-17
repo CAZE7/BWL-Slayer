@@ -27,7 +27,7 @@ func _ready() -> void:
 
 ## Ein neuer Kundenauftrag: was bedeutet er fuer das Unternehmen?
 func _on_order_received(order: Dictionary) -> void:
-	var sim := Simulation
+	var sim: SimulationEngine = Simulation
 	if sim == null:
 		return
 	var quantity := float(order.get("quantity", 0.0))
@@ -70,7 +70,7 @@ func _on_order_received(order: Dictionary) -> void:
 
 ## Eine Maschine wurde installiert: was aendert sich jetzt?
 func _on_delivery_installed(order: Dictionary) -> void:
-	var sim := Simulation
+	var sim: SimulationEngine = Simulation
 	if sim == null:
 		return
 	var spec: MachineSpec = sim.specs.get(String(order.get("spec_id", "")))
@@ -105,7 +105,7 @@ func _on_delivery_installed(order: Dictionary) -> void:
 
 ## Ein Auftrag wurde abgeschlossen: wie wirkt er sich auf die Liquidität aus?
 func _on_order_completed(order: Dictionary) -> void:
-	var sim := Simulation
+	var sim: SimulationEngine = Simulation
 	if sim == null:
 		return
 	var revenue := float(order.get("revenue", 0.0))
@@ -133,7 +133,7 @@ func _on_order_completed(order: Dictionary) -> void:
 func _on_cash_changed(cash: float, delta: float) -> void:
 	if delta >= 0.0:
 		return
-	var sim := Simulation
+	var sim: SimulationEngine = Simulation
 	if sim == null:
 		return
 
@@ -228,7 +228,7 @@ func _on_tick(_day: int, _tick: int) -> void:
 
 ## Führt die Analyse durch und erzeugt Hinweise.
 func analyze() -> Dictionary:
-	var sim := Simulation
+	var sim: SimulationEngine = Simulation
 	if sim == null:
 		return {}
 
@@ -379,7 +379,7 @@ func _analyze_capacity(machines: Array[MachineInstance]) -> Array:
 ## Investitionen: laufende Projekte und Wirtschaftlichkeit.
 func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 	var out: Array = []
-	var sim := Simulation
+	var sim: SimulationEngine = Simulation
 	# Lieferungen unterwegs
 	if not sim.deliveries.is_empty():
 		var delivery: Dictionary = sim.deliveries[0]
@@ -460,7 +460,7 @@ func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 ## Material ohne Vorlauf ist der haeufigste Grund fuer stillstehende
 ## Produktion. Der Berater warnt, BEVOR die Anlage stoppt – nicht
 ## danach.
-func _analyze_material_supply(sim: Node) -> Array:
+func _analyze_material_supply(sim: SimulationEngine) -> Array:
 	var out: Array = []
 	var material_types := sim.required_material_types()
 	if material_types.is_empty():
@@ -484,7 +484,7 @@ func _analyze_material_supply(sim: Node) -> Array:
 
 ## Die Materialversorgung einer einzelnen Materialart pruefen.
 func _analyze_material_type(
-	sim: Node, material_type: StringName, label: String,
+	sim: SimulationEngine, material_type: StringName, label: String,
 	daily_need: float, coverage: float, lead_time: int
 ) -> Array:
 	var out: Array = []
@@ -546,7 +546,7 @@ func _analyze_material_type(
 ## Ein Vertrag sichert Menge, kostet aber Preisbindung. Der Berater
 ## stellt die Frage, ob die Kapazitaet ohne den Vertrag besser
 ## ausgelastet waere.
-func _analyze_contracts(sim: Node) -> Array:
+func _analyze_contracts(sim: SimulationEngine) -> Array:
 	var out: Array = []
 	var contracts: Array = sim.contracts
 	if contracts.is_empty():
@@ -620,7 +620,7 @@ func _analyze_contracts(sim: Node) -> Array:
 ## Zahlen. Er stellt die Fragen, die der Spieler beantworten muss:
 ## Wieviel eigenes Kapital steckt im Unternehmen, und wie teuer wird
 ## das Fremdkapital?
-func _analyze_financing(sim: Node) -> Array:
+func _analyze_financing(sim: SimulationEngine) -> Array:
 	var out: Array = []
 	var economy: EconomyState = sim.economy
 	var equity := economy.equity
@@ -714,7 +714,7 @@ func _analyze_financing(sim: Node) -> Array:
 
 
 ## Aufträge: unwirtschaftliche oder unbedienbare Aufträge.
-func _analyze_orders(sim: Node) -> Array:
+func _analyze_orders(sim: SimulationEngine) -> Array:
 	var out: Array = []
 	for order in sim.orders:
 		if String(order.get("status", "")) != "accepted":
@@ -755,7 +755,7 @@ func _analyze_orders(sim: Node) -> Array:
 ## Ein Auftrag wird storniert, wenn die Lieferfrist ablaeuft, bevor
 ## die Menge produziert werden konnte. Das heisst: die Anlage war zu
 ## langsam oder die Materialversorgung hat nicht gestimmt.
-func _analyze_lost_orders(sim: Node) -> Array:
+func _analyze_lost_orders(sim: SimulationEngine) -> Array:
 	var out: Array = []
 	var cancelled := int(sim.stats.get("orders_cancelled", 0))
 	if cancelled <= 0:
@@ -812,7 +812,7 @@ func _analyze_efficiency(machines: Array[MachineInstance]) -> Array:
 ## Jede bestellte Maschine bindet Kapital, liefert aber noch keine
 ## Kapazität. Dieser Zustand wird leicht übersehen – gerade deshalb
 ## ist er eine der wichtigsten Kennzahlen im laufenden Betrieb.
-func _analyze_deliveries(sim: Node) -> Array:
+func _analyze_deliveries(sim: SimulationEngine) -> Array:
 	var out: Array = []
 	var pending_value := 0.0
 	var pending_count := 0
@@ -873,7 +873,7 @@ func _analyze_deliveries(sim: Node) -> Array:
 ## Je hoeher das Anlagevermoegen im Verhaeltnis zur Kapazitaet, desto
 ## mehr Kapital ist gebunden. Das ist der Kern der BWL-Frage "Wann
 ## lohnt sich die naechste Maschine?".
-func _analyze_capital_binding(sim: Node, machines: Array[MachineInstance]) -> Array:
+func _analyze_capital_binding(sim: SimulationEngine, machines: Array[MachineInstance]) -> Array:
 	var out: Array = []
 	var economy: EconomyState = sim.economy
 	if economy.fixed_assets <= 0.0:
@@ -924,7 +924,7 @@ func _analyze_capital_binding(sim: Node, machines: Array[MachineInstance]) -> Ar
 ##
 ## Begruendung und Lektion bleiben erhalten: Der Fahrplan gibt keine
 ## fertige Entscheidung ab, sondern die Frage, die davor steht.
-func _analyze_next_steps(sim: Node, machines: Array[MachineInstance]) -> Array:
+func _analyze_next_steps(sim: SimulationEngine, machines: Array[MachineInstance]) -> Array:
 	var out: Array = []
 	if machines.is_empty():
 		return out
@@ -1042,7 +1042,7 @@ func _analyze_next_steps(sim: Node, machines: Array[MachineInstance]) -> Array:
 ##   * Eine Endstufe ohne Vorstufe steht still.
 ##   * Die Vorstufe ist der Engpass (Rueckstau im Zwischenlager).
 ##   * Die Vorstufe produziert mehr, als die Endstufe verbraucht.
-func _analyze_production_chain(sim: Node, machines: Array[MachineInstance]) -> Array:
+func _analyze_production_chain(sim: SimulationEngine, machines: Array[MachineInstance]) -> Array:
 	var out: Array = []
 	if machines.is_empty():
 		return out
@@ -1121,7 +1121,7 @@ func _analyze_production_chain(sim: Node, machines: Array[MachineInstance]) -> A
 ##     nicht bedient, Umsatz geht verloren.
 ##   * Die Kapazitaet uebersteigt die Nachfrage: Fixkosten stehen
 ##     einem zu kleinen Ertrag gegenueber.
-func _analyze_demand_vs_capacity(sim: Node, machines: Array[MachineInstance]) -> Array:
+func _analyze_demand_vs_capacity(sim: SimulationEngine, machines: Array[MachineInstance]) -> Array:
 	var out: Array = []
 	if machines.is_empty():
 		return out

@@ -123,16 +123,19 @@ static func conveyor() -> MachineSpec:
 	spec.useful_life_years = 8
 	spec.imputed_interest_rate = 0.08
 	spec.fixed_operating_costs = 9200.0
-	spec.variable_cost_per_unit = 4.0
+	spec.variable_cost_per_unit = 3.2
 	# Interner Verrechnungspreis: das ist der Wert, den ein
 	# Halbfertigteil fuer die naechste Stufe hat.
-	spec.price_per_unit = 21.0
-	spec.capacity_units_per_year = 180000.0
+	spec.price_per_unit = 12.0
+	# Die Kapazitaet der Vorstufe ist genau der Bedarf einer
+	# Endstufe (2 Halbfertigteile je fertiger Einheit). Wer mehr
+	# Vorstufe baut, laeuft in den Rueckstau.
+	spec.capacity_units_per_year = 72000.0
 	spec.product_name = "Halbfertigteil"
 	# Die Vorstufe erzeugt ein Zwischenprodukt statt eines Endprodukts.
 	spec.output_product = PRODUCT_HALF
 	spec.material_type = MATERIAL_STEEL
-	spec.material_per_unit = 2.5
+	spec.material_per_unit = 1.6
 	spec.material_price_per_kg = 1.4
 	spec.labor_hours_per_year = 1800.0
 	spec.labor_rate_per_hour = 28.0
@@ -159,7 +162,10 @@ static func packer() -> MachineSpec:
 	spec.fixed_operating_costs = 5400.0
 	spec.variable_cost_per_unit = 3.0
 	spec.price_per_unit = 18.0
-	spec.capacity_units_per_year = 90000.0
+	# Die Endstufe verarbeitet zwei Halbfertigteile je fertiger
+	# Einheit. Ihre Kapazitaet bestimmt damit den Bedarf der
+	# Vorstufe: 36000 Einheiten x 2 = 72000 Halbfertigteile.
+	spec.capacity_units_per_year = 36000.0
 	spec.product_name = "Verpackte Ware"
 	# Die Endstufe verbraucht das Zwischenprodukt der Vorstufe.
 	spec.input_product = PRODUCT_HALF

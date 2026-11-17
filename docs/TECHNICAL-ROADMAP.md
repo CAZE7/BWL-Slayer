@@ -125,8 +125,8 @@ Die Kette ist der Schritt vom „zwei unabhängige Anlagen" zum
 
 | Element | Umsetzung |
 |---|---|
-| Vorstufe | Förderbandlinie: formt Stahl zu Halbfertigteilen |
-| Endstufe | Verpackungsautomat: verarbeitet 2 Halbfertigteile je Einheit |
+| Vorstufe | Förderbandlinie: 72 000 Halbfertigteile/Jahr aus Stahl |
+| Endstufe | Verpackungsautomat: 36 000 Einheiten/Jahr, je 2 Halbfertigteile |
 | Zwischenlager | Bestand je Zwischenprodukt, in Stück, in der Bilanz bewertet |
 | Kopplung | Die Endstufe produziert nur, was die Vorstufe geliefert hat |
 | Reihenfolge | Die Vorstufe läuft zuerst; ihre Tagesproduktion steht der Endstufe noch am selben Tag zur Verfügung |
@@ -137,9 +137,18 @@ Die Kette ist der Schritt vom „zwei unabhängige Anlagen" zum
 | Sichtbarkeit | Zwischenlager in der Seitenleiste, Stufenrolle auf dem Gelände, Leerlauf bei fehlender Zulieferung |
 
 Der **Ketten-Deckungsbeitrag** ist der Deckungsbeitrag der Endstufe
-plus die Wertschöpfung der Vorstufe, abzüglich deren Kosten. Wer nur
-die Endstufe rechnet, hält die Vorstufe für kostenlos — genau der
-Fehler, den das Spiel zeigen soll.
+plus die Wertschöpfung der Vorstufe, abzüglich deren Kosten. Er ist
+damit **höher** als der Deckungsbeitrag der Endstufe allein – die
+Vorstufe schafft echten Mehrwert. Wer nur die Endstufe rechnet, hält
+die Vorstufe für kostenlos; genau der Fehler, den das Spiel zeigen
+soll.
+
+Die Kapazitäten sind aufeinander abgestimmt: Eine Endstufe braucht
+2 × 36 000 = 72 000 Halbfertigteile, eine Vorstufe liefert genau
+72 000. Die Vorstufe ist damit ausreichend, aber nicht
+überdimensioniert – wer eine zweite Vorstufe baut, läuft in den
+Rückstau und bindet Kapital ohne Erlös. Bei voller Auslastung
+erwirtschaftet die Kette rund 17 % Umsatzrendite.
 
 Der Berater erkennt drei Kettenprobleme: fehlender Zulieferer,
 Rückstau im Zwischenlager und die Abweichung zwischen Nachfrage und

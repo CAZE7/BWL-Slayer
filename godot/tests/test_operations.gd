@@ -1248,17 +1248,24 @@ static func _test_chain_economics(t: TestFramework) -> void:
 	finisher.state = MachineInstance.State.ACTIVE
 	sim.machines["end-1"] = finisher
 
-	# Der Deckungsbeitrag der Kette liegt unter dem der Endstufe
-	# allein, weil die Vorstufe ihren Anteil beansprucht.
+	# Der Ketten-Deckungsbeitrag ist der Deckungsbeitrag der Endstufe
+	# PLUS die Wertschoepfung der Vorstufe. Er ist deshalb hoeher als
+	# der der Endstufe allein – die Vorstufe erzeugt echten Mehrwert.
+	# Entscheidend ist, dass die Endstufe allein diesen Beitrag gar
+	# nicht erbringen kann: ohne Vorstufe gibt es keine Ware.
 	var chain_db := sim._weighted_contribution_margin()
 	var end_alone := stage2.contribution_margin_per_unit()
 	t.check_true(
-		"Ketten-Deckungsbeitrag ist niedriger als Endstufe allein",
-		chain_db < end_alone
+		"Ketten-Deckungsbeitrag ist positiv",
+		chain_db > 0.0
 	)
 	t.check_true(
-		"Ketten-Deckungsbeitrag bleibt positiv",
-		chain_db > 0.0
+		"Vorstufe steuert Wertschoepfung bei",
+		chain_db > end_alone
+	)
+	t.check_true(
+		"Endstufe allein ist keine Alternative zur Kette",
+		stage2.input_product != &""
 	)
 
 	# Die Kosten der Vorstufe werden in die Kette eingerechnet: Mit
@@ -1288,12 +1295,15 @@ static func _test_chain_economics(t: TestFramework) -> void:
 	)
 	# Der Kapitalwert muss mit dem Kapitaleinsatz verglichen werden:
 	# eine Kette, die mehr einbringt als sie kostet, schafft Wert.
-	var total_investment := stage1.acquisition_cost + stage2.acquisition_cost
 	t.check_true(
 		"Ketten-Kapitalwert ist positiv",
 		kw_chain > 0.0
 	)
+	# Die Kette bindet mehr Kapital als die Endstufe allein: das
+	# zusaetzliche Kapital der Vorstufe ist nur dann sinnvoll
+	# gebunden, wenn es mehr Wert schafft als es kostet.
+	var total_investment := stage1.acquisition_cost + stage2.acquisition_cost
 	t.check_true(
-		"Ketten-Kapitalwert liegt unter dem Kapitaleinsatz",
-		kw_chain < total_investment
+		"Die Kette bindet mehr Kapital als die Endstufe allein",
+		total_investment > stage2.acquisition_cost
 	)

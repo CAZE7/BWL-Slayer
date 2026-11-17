@@ -617,8 +617,18 @@ func sign_contract(
 ## Eine Kuendigung vor Laufzeitende kostet eine Gebuehr. Das macht
 ## die Entscheidung gegenlaeufig: Wer zu frueh kuendigt, zahlt.
 func terminate_contract(contract_id: String) -> Dictionary:
-	var contract: Dictionary = contracts.get(contract_id)
-	if contract == null:
+	# `contracts` ist ein Array, kein Dictionary. Ein `get()` waere
+	# hier ein Indexzugriff und wuerde einen String erwarten. Gesucht
+	# wird deshalb ueber den Index.
+	var contract: Dictionary = {}
+	var found := false
+	for entry in contracts:
+		var candidate: Dictionary = entry
+		if String(candidate.get("id", "")) == contract_id:
+			contract = candidate
+			found = true
+			break
+	if not found:
 		return {"ok": false, "error": "Vertrag nicht gefunden."}
 
 	var fee: float = float(contract.get("revenue_per_year", 0.0)) * 0.10

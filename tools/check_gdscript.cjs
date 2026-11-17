@@ -502,6 +502,63 @@ for (const file of files) {
 }
 
 /* ------------------------------------------------------------------
+ * 2b6. Typinferenz aus einem Parameter mit Basis-Typ Node
+ *
+ * Godot 4.7 behandelt "Cannot infer the type of "x" variable" als
+ * Fehler. Der Ausloeser ist ein Aufruf auf einer Variable, deren Typ
+ * zu schwach ist, damit der Rueckgabetyp bekannt waere:
+ *
+ *     func analyse(sim: Node) -> void:
+ *         var x := sim.some_method()   # Parse-Fehler
+ *
+ * Bei "Node" kennt der Compiler die eigene Methode nicht, also
+ * bleibt der Rueckgabetyp ein Variant und die Ableitung schlaegt
+ * fehl. Der Fehler fiel beim Start auf, nicht im Test.
+ *
+ * Die Regel meldet jeden Aufruf "var x := param.method()", wenn der
+ * Parameter als Node oder ohne Typ deklariert wurde. Die Abhilfe
+ * ist die konkrete Klasse: "func analyse(sim: SimulationEngine)".
+ * ------------------------------------------------------------------ */
+{
+  for (const file of files) {
+    const code = stripCode(fs.readFileSync(file, 'utf8'));
+
+    // 1) Parameter, die als Node deklariert sind.
+    const nodeParams = new Set();
+    for (const m of code.matchAll(
+      /\bfunc\s+[A-Za-z_][A-Za-z0-9_]*\s*\(([^)]*)\)\s*(?:->\s*([A-Za-z_][A-Za-z0-9_]*))?\s*:/g
+    )) {
+      for (const pm of m[1].matchAll(
+        /([A-Za-z_][A-Za-z0-9_]*)\s*:\s*Node\b/g
+      )) {
+        nodeParams.add(pm[1]);
+      }
+    }
+
+    // 2) Variablen ohne Typ, die einen Autoload oder eine
+    //    Klassenvariable zuweisen.
+    for (const m of code.matchAll(
+      /\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\s*:=\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/gm
+    )) {
+      nodeParams.add(m[2]);
+    }
+
+    for (const name of nodeParams) {
+      const callRe = new RegExp(
+        `\\bvar\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*:=\\s*${name}\\.([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
+        'g'
+      );
+      for (const cm of code.matchAll(callRe)) {
+        warn(file, 1,
+          `Typinferenz aus "${name}.${cm[2]}()": "${name}" ist nicht konkret typisiert – ` +
+          `Godot 4.7 kann den Rueckgabetyp nicht ableiten und bricht den Start ab. ` +
+          `Den Parameter mit der konkreten Klasse typisieren (z. B. "sim: SimulationEngine").`);
+      }
+    }
+  }
+}
+
+/* ------------------------------------------------------------------
  * 2b5. Aufrufe gegen die Godot-OS-API pruefen
  *
  * Godot 4 kennt kein `OS.exit()` – der Prozess wird ueber
