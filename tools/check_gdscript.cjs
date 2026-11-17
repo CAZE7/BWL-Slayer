@@ -559,6 +559,49 @@ for (const file of files) {
 }
 
 /* ------------------------------------------------------------------
+ * 2b7. bool() auf einem Element aus einem gecasteten Array
+ *
+ * Godot 4 kennt bool() nicht als Konstruktor. Der Aufruf ist nur
+ * erlaubt, wenn das Argument ein Variant ist - dann greift die
+ * Typkonvertierung. Liegt das Argument in einer Schleife ueber ein
+ * gecastetes Array ("for x in (arr as Array)"), ist es bereits
+ * statisch bekannt und der Aufruf bricht mit
+ * "Nonexistent 'bool' constructor" ab.
+ *
+ * Solche Aufrufe sind im Projekt genau einmal vorgekommen und haben
+ * den Spielstand beim Speichern zerstoert, ohne dass es auffiel:
+ * Die Suite, die den Weg ausloeste, kam erst mit dem neuen
+ * Persistenztest dazu.
+ * ------------------------------------------------------------------ */
+{
+  for (const file of files) {
+    const code = stripCode(fs.readFileSync(file, 'utf8'));
+
+    // Schleifenvariablen ueber ein gecastetes Array einsammeln.
+    const castLoopVars = new Set();
+    for (const m of code.matchAll(
+      /\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+\(([^)]*\bas\s+[A-Za-z_][A-Za-z0-9_]*)\)\s*:/g
+    )) {
+      castLoopVars.add(m[1]);
+    }
+
+    for (const name of castLoopVars) {
+      const callRe = new RegExp(
+        `\\bbool\\(\\s*${name}\\s*\\)`,
+        'g'
+      );
+      for (const cm of code.matchAll(callRe)) {
+        warn(file, 1,
+          `bool(${name}) ist in Godot 4 kein gueltiger Aufruf – ` +
+          `der Compiler kennt den Typ bereits und meldet ` +
+          `"Nonexistent 'bool' constructor". ` +
+          `Stattdessen den Vergleich verwenden: "${name} == true".`);
+      }
+    }
+  }
+}
+
+/* ------------------------------------------------------------------
  * 2b5. Aufrufe gegen die Godot-OS-API pruefen
  *
  * Godot 4 kennt kein `OS.exit()` – der Prozess wird ueber

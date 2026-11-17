@@ -45,6 +45,20 @@ static func _basic_spec() -> MachineSpec:
 	return spec
 
 
+## Eine eigene Instanz des Beraters.
+##
+## Der Berater ist im Spiel ein Autoload. In einem statischen
+## Testskript ist der Autoload-Name aber kein gueltiger Bezeichner -
+## er existiert nur zur Laufzeit. Deshalb wird die Klasse hier
+## ausdruecklich geladen. Das prueft zugleich, dass sich der
+## Berater ohne das Spiel instanziieren laesst.
+static func _advisor() -> Node:
+	var script: GDScript = load("res://src/advisor/advisor.gd")
+	if script == null:
+		return null
+	return script.new() as Node
+
+
 ## Findet einen Hinweis nach seiner ID.
 static func _find(findings: Array, id_prefix: String) -> Dictionary:
 	for f in findings:
@@ -73,7 +87,10 @@ static func run(t: TestFramework) -> void:
 # Grundbefunde
 # ------------------------------------------------------------------
 static func _test_basic_findings(t: TestFramework) -> void:
-	var advisor := Advisor
+	var advisor := _advisor()
+	t.check_true("Berater laesst sich instanziieren", advisor != null)
+	if advisor == null:
+		return
 
 	# Ohne Anlage: der Berater muss sagen, dass noch nichts laeuft.
 	advisor.reset()
@@ -120,7 +137,10 @@ static func _test_basic_findings(t: TestFramework) -> void:
 # Der Berater stellt Fragen, er liefert keine fertigen Antworten
 # ------------------------------------------------------------------
 static func _test_questions_not_answers(t: TestFramework) -> void:
-	var advisor := Advisor
+	var advisor := _advisor()
+	t.check_true("Berater laesst sich instanziieren", advisor != null)
+	if advisor == null:
+		return
 	var spec := _basic_spec()
 	var sim := _make_sim(spec)
 
@@ -151,7 +171,10 @@ static func _test_questions_not_answers(t: TestFramework) -> void:
 # Nachfrage gegen Kapazität
 # ------------------------------------------------------------------
 static func _test_demand_vs_capacity(t: TestFramework) -> void:
-	var advisor := Advisor
+	var advisor := _advisor()
+	t.check_true("Berater laesst sich instanziieren", advisor != null)
+	if advisor == null:
+		return
 	var spec := _basic_spec()
 
 	# Nachfrage übersteigt die Kapazität deutlich.
@@ -204,7 +227,10 @@ static func _test_demand_vs_capacity(t: TestFramework) -> void:
 # Produktionskette
 # ------------------------------------------------------------------
 static func _test_chain_findings(t: TestFramework) -> void:
-	var advisor := Advisor
+	var advisor := _advisor()
+	t.check_true("Berater laesst sich instanziieren", advisor != null)
+	if advisor == null:
+		return
 
 	var stage1 := MachineSpec.new()
 	stage1.id = &"VOR"
@@ -275,7 +301,10 @@ static func _test_chain_findings(t: TestFramework) -> void:
 # Der Fahrplan nennt eine Zielzahl
 # ------------------------------------------------------------------
 static func _test_next_steps(t: TestFramework) -> void:
-	var advisor := Advisor
+	var advisor := _advisor()
+	t.check_true("Berater laesst sich instanziieren", advisor != null)
+	if advisor == null:
+		return
 	var spec := _basic_spec()
 
 	# Auslastung zu gering: der Fahrplan nennt die Zielmenge.

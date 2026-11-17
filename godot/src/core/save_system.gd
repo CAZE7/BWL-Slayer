@@ -186,7 +186,13 @@ static func _sanitize_worlds(raw: Variant) -> Dictionary:
 		var raw_stages: Variant = world_entry.get("stages", [])
 		if typeof(raw_stages) == TYPE_ARRAY:
 			for stage in (raw_stages as Array):
-				stages.append(bool(stage))
+				# Ein gespeicherter Fortschritt kann auch ein String
+				# oder eine Zahl sein. Nur echte Bools bleiben
+				# Bools; alles andere wird zu false. Der Vergleich
+				# ist eindeutig - ein bool()-Aufruf waere hier nicht
+				# moeglich, weil der Compiler den Wert bereits
+				# kennt.
+				stages.append(stage == true)
 		var points: Array = []
 		var raw_points: Variant = world_entry.get("points", [])
 		if typeof(raw_points) == TYPE_ARRAY:
