@@ -198,8 +198,13 @@ jobs:
           # Langoptionen --signal und --kill-after sind auf dem
           # ubuntu-runner zwar verfuegbar, die einfache Form ist
           # robuster.
-          timeout 180 "$HOME/godot-bin/godot" --headless --path godot \
-            --script res://tests/run_tests.gd 2>&1 | tee godot/test-output.log
+          # Wichtig: Die Tests laufen als Szenenlauf, NICHT mit
+          # --script. Im --script-Modus instanziiert Godot keine
+          # Autoloads; Skripte mit Autoload-Bezuegen kompilieren dann
+          # nicht und ganze Testfunktionen brechen still ab, ohne als
+          # Fehlschlag zu zaehlen.
+          timeout 300 "$HOME/godot-bin/godot" --headless --path godot \
+            res://tests/test_scene.tscn 2>&1 | tee godot/test-output.log
           CODE="${PIPESTATUS[0]}"
           # Godot schreibt seinen Verlauf zusaetzlich nach user://. Falls
           # stdout durch einen Abbruch verloren ging, wird diese Datei

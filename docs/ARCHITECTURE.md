@@ -226,9 +226,15 @@ save_service.gd  Autoload-Fassade: write_slot / load_slot / delete_slot
 | `test_persistence.gd` | Speichern, Laden, Migration, Sanitizing |
 | `test_learning.gd` | Inhaltsvollständigkeit, Aufgabenlogik, Freischaltung |
 
-Ausführung: `godot/tests/run_tests.gd` lädt die Suites zur Laufzeit über
-`load()` (ein `preload` im SceneTree-Skript bricht den Lauf vor
-`_init()` ab). Der Bericht landet in `user://test-report/report.json`.
+Ausführung: `godot --headless --path godot res://tests/test_scene.tscn`
+startet `godot/tests/test_main.gd` als echten Projektlauf. Das ist
+Absicht und darf nicht auf `--script` zurückgebaut werden: Im
+`--script`-Modus instanziiert Godot keine Autoloads, Skripte mit
+Autoload-Bezügen (EventBus, Simulation, …) kompilieren dann nicht,
+und betroffene Testfunktionen brechen still ab, ohne als Fehlschlag
+zu zählen. Die Suites werden zur Laufzeit über `load()` geladen (ein
+`preload` würde den Lauf bei einem Fehler in einer Suite komplett
+abbrechen). Der Bericht landet in `user://test-report/report.json`.
 
 ### Node-Prüfungen
 

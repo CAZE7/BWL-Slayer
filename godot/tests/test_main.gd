@@ -1,17 +1,23 @@
-extends SceneTree
+extends Node
 
 ## Test-Einstiegspunkt für headless CI.
 ##
-## Aufruf:  godot --headless --path godot --script res://tests/run_tests.gd
+## Aufruf:  godot --headless --path godot res://tests/test_scene.tscn
 ##
-## Schreibt einen JSON-Bericht nach godot/test-report/report.json und
-## beendet den Prozess mit Exit-Code 0 (alles grün) bzw. 1 (Fehler).
+## Wichtig: Die Tests laufen als ECHTER Projektlauf (Szene), nicht
+## mit --script. Der Unterschied ist entscheidend: Im --script-Modus
+## instanziiert Godot KEINE Autoloads. Jedes Skript, das EventBus,
+## GameState, Simulation, SaveService oder Advisor referenziert,
+## kompiliert dann nicht ("Identifier not found") - und jede
+## Testfunktion, die eine Klasse aus so einem Skript benutzt, bricht
+## mit "Nonexistent function 'new' in base 'GDScript'" STILL ab.
+## Die abgebrochenen Pruefungen fehlen einfach im Ergebnis, ohne als
+## Fehlschlag zu zaehlen. Genau das hat lange Zeit Dutzende
+## Testfunktionen unsichtbar uebersprungen.
 ##
-## Wichtige Details zu Godot 4:
+## Weitere Details zu Godot 4:
 ##
-##  * `quit(code)` beendet den Prozess mit dem angegebenen Exit-Code.
-##    Aufrufe, die per `call_deferred` danach geplant werden, laufen
-##    NICHT mehr – deshalb wird direkt gequittet.
+##  * `get_tree().quit(code)` setzt den Exit-Code des Prozesses.
 ##
 ##  * Ein Parse-Fehler im Skript fuehrt zu Exit-Code 0. Der CI-Schritt
 ##    prueft deshalb zusaetzlich, ob der Testbericht ueberhaupt
@@ -20,15 +26,20 @@ extends SceneTree
 ##  * stdout ist gepuffert. Bricht der Prozess ab, geht die Ausgabe
 ##    verloren. Der Testlauf schreibt seinen Verlauf deshalb direkt
 ##    in eine Datei nach user://.
+##
+##  * NICHT nach res://test-output.log schreiben! In diese Datei
+##    leitet der CI-Schritt die Prozessausgabe um (tee). Ein
+##    Schreiben von hier ueberschreibt sie von innen - Banner,
+##    RUN-TESTS-Zeilen und alle SCRIPT-ERROR-Zeilen gehen verloren.
 
 const LOG_PATH := "user://test-output.log"
 
 # --- Testsuiten ---
 #
 # Wichtig: Die Suiten werden zur Laufzeit geladen, nicht per preload.
-# Ein preload im Kopf eines SceneTree-Skripts wuerde die Datei beim
-# Laden des Skripts einbinden – ein Fehler darin wuerde den gesamten
-# Lauf still abbrechen.
+# Ein preload im Kopf dieses Skripts wuerde die Datei beim Laden
+# einbinden – ein Fehler darin wuerde den gesamten Lauf still
+# abbrechen.
 const SUITE_PATHS := [
 	"res://tests/test_bwl_engine.gd",
 	"res://tests/test_engine_parity.gd",
@@ -41,9 +52,9 @@ const SUITE_PATHS := [
 ]
 
 
-func _init() -> void:
-	# Erste Ausgabe: zeigt, ob das Skript ueberhaupt laeuft.
-	print("RUN-TESTS: _init() erreicht")
+func _ready() -> void:
+	# Erste Ausgabe: zeigt, ob die Szene ueberhaupt laeuft.
+	print("RUN-TESTS: _ready() erreicht (Szenenlauf mit Autoloads)")
 	# Das Verzeichnis muss existieren, bevor geschrieben werden kann.
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(LOG_PATH.get_base_dir()))
 	# Protokolldatei anlegen. stdout allein ist nicht verlaesslich.
@@ -63,7 +74,7 @@ func _init() -> void:
 	for suite_path in SUITE_PATHS:
 		print("RUN-TESTS: Suite startet: ", suite_path)
 		var suite: GDScript = load(suite_path)
-		if suite == null:
+		if suite == null or not suite.can_instantiate():
 			t.check_true("Suite ladbar: %s" % suite_path, false)
 			continue
 		suite.run(t)
@@ -73,13 +84,8 @@ func _init() -> void:
 	var code := t.report("res://test-report")
 
 	# Aus dem user://-Verzeichnis in den Projektordner kopieren, damit
-	# der CI-Schritt die Datei direkt findet.
-	#
-	# Wichtig: NICHT nach res://test-output.log schreiben! In diese
-	# Datei leitet der CI-Schritt die Prozessausgabe um (tee). Ein
-	# Schreiben von hier ueberschreibt sie von innen - Banner,
-	# RUN-TESTS-Zeilen und alle SCRIPT-ERROR-Zeilen gehen verloren.
-	# Genau das hat die Fehlersuche mehrere Laeufe gekostet.
+	# der CI-Schritt die Datei direkt findet. Siehe Kopfkommentar:
+	# ausdruecklich NICHT nach res://test-output.log.
 	if log_file != null:
 		var source := FileAccess.get_file_as_string(LOG_PATH)
 		var target := FileAccess.open("res://test-framework.log", FileAccess.WRITE)
@@ -93,6 +99,5 @@ func _init() -> void:
 	else:
 		print("\n%d Pruefungen fehlgeschlagen." % t.failed)
 
-	# Beendet den Prozess mit dem Exit-Code. Deferred aufrufe wuerden
-	# danach nicht mehr ausgefuehrt.
-	quit(code)
+	# Beendet den Prozess mit dem Exit-Code.
+	get_tree().quit(code)

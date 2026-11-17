@@ -187,12 +187,18 @@ static func _sanitize_worlds(raw: Variant) -> Dictionary:
 		if typeof(raw_stages) == TYPE_ARRAY:
 			for stage in (raw_stages as Array):
 				# Ein gespeicherter Fortschritt kann auch ein String
-				# oder eine Zahl sein. Nur echte Bools bleiben
-				# Bools; alles andere wird zu false. Der Vergleich
-				# ist eindeutig - ein bool()-Aufruf waere hier nicht
-				# moeglich, weil der Compiler den Wert bereits
-				# kennt.
-				stages.append(stage == true)
+				# oder eine Zahl sein. Nur echte Bools bleiben Bools;
+				# alles andere wird zu false.
+				#
+				# Wichtig: weder bool(stage) noch stage == true sind
+				# hier gueltig. bool() ist kein Konstruktor fuer
+				# Variants, und == wirft bei String vs. bool einen
+				# Laufzeitfehler ("Invalid operands 'String' and
+				# 'bool'"). Nur die Typpruefung ist sicher.
+				var is_done := false
+				if typeof(stage) == TYPE_BOOL:
+					is_done = stage
+				stages.append(is_done)
 		var points: Array = []
 		var raw_points: Variant = world_entry.get("points", [])
 		if typeof(raw_points) == TYPE_ARRAY:
