@@ -966,7 +966,7 @@ func _analyze_next_steps(sim: SimulationEngine, machines: Array[MachineInstance]
 				"Welche Anlage hat die höchste Kapazität bei den geringsten Fixkosten?",
 				"Welche Kundenaufträge lehnt dein Betrieb bisher ab?",
 			],
-			"lesson": "Fixkosten sind sunkener Kosten: Sie fallen auch bei leerer Halle an. Erst die vorhandene Kapazitaet zu nutzen ist immer die guenstigste Investition.",
+			"lesson": "Fixkosten fallen auch bei leerer Halle an: Sie sind beschäftigungsunabhaengig, aber nicht sunkener Kosten. Erst die vorhandene Kapazitaet zu nutzen ist immer die guenstigste Investition.",
 			"action": "Pruefe deine offenen Angebote und stelle die Auftragsannahme auf aktiv.",
 		})
 		return out

@@ -65,8 +65,16 @@ static func _advisor() -> Node:
 	# deshalb ueber eine eigene Typannotation (Array) zugewiesen.
 	var script: GDScript = load("res://src/advisor/advisor.gd")
 	if script == null:
+		print("ADVISOR-TEST: Skript nicht ladbar (load() lieferte null).")
 		return null
-	return script.new() as Node
+	if not script.can_instantiate():
+		print("ADVISOR-TEST: Skript geladen, aber nicht instanziierbar - vermutlich ein Kompilierfehler im Berater-Skript. Details stehen als SCRIPT ERROR in der Prozessausgabe.")
+		return null
+	var instance: Object = script.new()
+	if instance == null:
+		print("ADVISOR-TEST: new() lieferte null.")
+		return null
+	return instance as Node
 
 
 ## Findet einen Hinweis nach seiner ID.

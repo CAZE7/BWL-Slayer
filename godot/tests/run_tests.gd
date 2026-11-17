@@ -74,9 +74,15 @@ func _init() -> void:
 
 	# Aus dem user://-Verzeichnis in den Projektordner kopieren, damit
 	# der CI-Schritt die Datei direkt findet.
+	#
+	# Wichtig: NICHT nach res://test-output.log schreiben! In diese
+	# Datei leitet der CI-Schritt die Prozessausgabe um (tee). Ein
+	# Schreiben von hier ueberschreibt sie von innen - Banner,
+	# RUN-TESTS-Zeilen und alle SCRIPT-ERROR-Zeilen gehen verloren.
+	# Genau das hat die Fehlersuche mehrere Laeufe gekostet.
 	if log_file != null:
 		var source := FileAccess.get_file_as_string(LOG_PATH)
-		var target := FileAccess.open("res://test-output.log", FileAccess.WRITE)
+		var target := FileAccess.open("res://test-framework.log", FileAccess.WRITE)
 		if target != null:
 			target.store_string(source)
 			target.flush()
