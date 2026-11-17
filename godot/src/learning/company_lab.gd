@@ -125,7 +125,7 @@ static func snapshot(sim: Node) -> Snapshot:
 
 	s.material_daily_need = sim.daily_material_need()
 	s.material_coverage_days = sim.material_coverage_days()
-	s.material_stock_kg = sim.material_stock()
+	s.material_stock_kg = sim.total_material_stock()
 	return s
 
 

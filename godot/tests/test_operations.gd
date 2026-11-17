@@ -186,6 +186,13 @@ static func _test_orders(t: TestFramework) -> void:
 	sim.specs[spec.id] = spec
 	sim.accepting_orders = true
 
+	# Ohne betriebsbereite Anlage gibt es keine Tagesproduktion -
+	# die Auftraege koennten nie bedient werden.
+	var worker := MachineInstance.new(spec, "auf-1")
+	worker.state = MachineInstance.State.ACTIVE
+	worker.commissioned_year = 1
+	sim.machines["auf-1"] = worker
+
 	var order := {
 		"id": "o-1",
 		"status": "accepted",
@@ -200,7 +207,9 @@ static func _test_orders(t: TestFramework) -> void:
 
 	# Kapazitaet 360/360 = 1 Stueck pro Tag -> 100 Tage noetig,
 	# Lieferfrist sind 30 Tage: der Auftrag muss scheitern.
-	for _i in range(30):
+	# Storniert wird, sobald progress_days die Frist UEBERschreitet -
+	# also beim 31. Verarbeitungstag.
+	for _i in range(31):
 		sim._process_customer_orders()
 	t.check_true("Auftrag bei Fristablauf storniert", String(order["status"]) == "cancelled")
 	t.check_true("Nicht als erfuellt gewertet", int(sim.stats.get("orders_completed", 0)) == 0)
@@ -224,7 +233,9 @@ static func _test_orders(t: TestFramework) -> void:
 		days += 1
 	t.check_true("Auftrag bei ausreichender Produktion erfuellt", String(order2["status"]) == "delivered")
 	t.check_approx("Erlos gebucht", sim.economy.revenue_current_year, 100.0, 0.01)
-	t.check_approx("Kasse erhoeht", sim.economy.cash, 100.0, 0.01)
+	# Die Kasse startet bei 50.000 (Startkapital) und waechst um den
+	# sofort bezahlten Erloes.
+	t.check_approx("Kasse erhoeht", sim.economy.cash, 50_100.0, 0.01)
 
 	# Eigenkapital NICHT doppelt fortgeschrieben
 	t.check_true(
@@ -391,22 +402,36 @@ static func _test_year_close(t: TestFramework) -> void:
 	t.check_approx("Investition mindert die Kasse", eco.cash, 84000.0, 0.01)
 	t.check_approx("Investition erhoeht das Anlagevermoegen", eco.fixed_assets, 16000.0, 0.01)
 
+	# Die fabrizierte Jahresproduktion (10.000 Stueck) braucht die
+	# dazugehoerigen Zahlungsstroeme, sonst KANN die Bilanz nicht
+	# aufgehen: Das Material wurde im Jahr eingekauft (Kasse ->
+	# Lagerbestand, ein Aktivtausch) und bei der Produktion
+	# verbraucht; die Fixkosten wurden monatlich von der Kasse
+	# bezahlt. Im echten Lauf erledigen buy_material() und die
+	# Monatsbuchung das - hier wird es nachgestellt.
+	var material_purchase := 10000.0 * spec.material_per_unit * spec.material_price_per_kg
+	eco.move_cash(-material_purchase)
+	eco.inventory_value = material_purchase
+	eco.move_cash(-(spec.fixed_operating_costs + spec.labor_cost()))
+
 	# Jahresabschluss
 	sim._close_business_year()
 
 	# Der Materialaufwand muss in den Kosten stehen.
 	var expected_material := 10000.0 * spec.material_per_unit * spec.material_price_per_kg
 	t.check_approx("Materialaufwand ausgewiesen", eco.material_costs_year, expected_material, 0.01)
+	# costs_current_year wird am Jahresende auf 0 zurueckgesetzt -
+	# fuer das abgeschlossene Jahr zaehlt die kumulierte Summe.
 	t.check_true(
 		"Materialaufwand in den Gesamtkosten",
-		eco.costs_current_year >= expected_material
+		eco.costs_total >= expected_material
 	)
 
 	# Die Fixkosten muessen gebucht sein.
 	t.check_true("Fixkosten gebucht", eco.fixed_costs_year > 0.0)
 	t.check_true(
 		"Fixkosten in den Gesamtkosten",
-		eco.costs_current_year >= eco.fixed_costs_year
+		eco.costs_total >= eco.fixed_costs_year
 	)
 
 	# Die Abschreibung mindert das Anlagevermoegen, die Kasse nicht.
@@ -588,8 +613,15 @@ static func _test_full_year(t: TestFramework) -> void:
 
 	var start_cash := sim.economy.cash
 
-	# Ein ganzes Jahr simulieren.
-	for _i in range(360):
+	# Zwei ganze Jahre simulieren.
+	#
+	# Warum zwei? Die Nachfrage taktet mit der Kapazitaet: bei
+	# ~11.600 Stueck Jahreskapazitaet kommt nur alle 154 Tage ein
+	# Auftrag, und der umfasst ~7.800 Stueck - rund 240
+	# Produktionstage. Ein Auftrag aus Tag 154 wird also erst im
+	# zweiten Jahr fertig. Ein Ein-Jahres-Lauf koennte prinzipiell
+	# keinen abgeschlossenen Auftrag enthalten.
+	for _i in range(720):
 		sim.advance_day()
 
 	# Es muessen Auftraege eingegangen sein.
@@ -606,7 +638,7 @@ static func _test_full_year(t: TestFramework) -> void:
 		sim.economy.cash > start_cash
 	)
 
-	# Die Bilanz muss aufgehen.
+	# Die Bilanz muss aufgehen - auch nach zwei Jahresabschluessen.
 	var balance := sim.economy.balance_check()
 	t.check_approx("Bilanz stimmt nach einem Jahr", balance, 0.0, 1.0)
 
@@ -624,7 +656,7 @@ static func _test_full_year(t: TestFramework) -> void:
 	t.check_approx(
 		"Tageszaehler stimmt",
 		float(sim.stats.get("days_simulated", 0)),
-		360.0,
+		720.0,
 		0.01
 	)
 
@@ -797,12 +829,15 @@ static func _test_material_logistics(t: TestFramework) -> void:
 		0.01
 	)
 
-	# Der fuenfte Tag: die Ware kommt an.
+	# Der fuenfte Tag: die Ware kommt an. Die laufende Produktion
+	# verbraucht am selben Tag bereits ihren Tagesbedarf - die
+	# Lieferung speist einen lebenden Betrieb, kein totes Lager.
+	var daily_use := 2.0 * 1000.0 / 360.0
 	sim.advance_day()
 	t.check_approx(
 		"Ware am Liefertag da",
 		sim.inventory_material,
-		1_000.0,
+		1_000.0 - daily_use,
 		0.01
 	)
 	t.check_approx(
@@ -816,7 +851,7 @@ static func _test_material_logistics(t: TestFramework) -> void:
 	t.check_approx(
 		"Reichweite berechenbar",
 		sim.material_coverage_days(),
-		1_000.0 / (2.0 * 1000.0 / 360.0),
+		(1_000.0 - daily_use) / daily_use,
 		1.0
 	)
 
@@ -827,7 +862,7 @@ static func _test_material_logistics(t: TestFramework) -> void:
 	t.check_approx(
 		"Ware sofort im Lager",
 		sim.inventory_material,
-		1_500.0,
+		1_000.0 - daily_use + 500.0,
 		0.01
 	)
 	t.check_approx(
@@ -840,7 +875,14 @@ static func _test_material_logistics(t: TestFramework) -> void:
 	# Der Spielstand muss die Lieferung ueberstehen.
 	var sim2 := SimulationEngine.new()
 	sim2.specs[spec.id] = spec
-	sim2.order_material(800.0, 4)
+	# Ohne betriebsbereite Anlage kennt der Betrieb keinen
+	# Materialpreis - die Bestellung wuerde abgelehnt.
+	var m2 := MachineInstance.new(spec, "matlog-2")
+	m2.state = MachineInstance.State.ACTIVE
+	m2.commissioned_year = 1
+	sim2.machines["matlog-2"] = m2
+	var order2 := sim2.order_material(800.0, 4)
+	t.check_true("Zweite Bestellung moeglich", bool(order2.get("ok", false)))
 	var restored := SimulationEngine.new()
 	restored.specs[spec.id] = spec
 	restored.from_dict(sim2.to_dict())
@@ -1074,7 +1116,14 @@ static func _test_contracts(t: TestFramework) -> void:
 	# Der Spielstand muss die Vertraege behalten.
 	var sim2 := SimulationEngine.new()
 	sim2.specs[spec.id] = spec
-	sim2.sign_contract(500.0, 50.0, 5)
+	# Ohne betriebsbereite Anlage gibt es keine Kapazitaet - der
+	# Vertrag wuerde an der Kapazitaetsgrenze abgelehnt.
+	var m2 := MachineInstance.new(spec, "vertr-2")
+	m2.state = MachineInstance.State.ACTIVE
+	m2.commissioned_year = 1
+	sim2.machines["vertr-2"] = m2
+	var signed2 := sim2.sign_contract(500.0, 50.0, 5)
+	t.check_true("Vertrag fuer den Spielstand geschlossen", bool(signed2.get("ok", false)))
 	var restored := SimulationEngine.new()
 	restored.specs[spec.id] = spec
 	restored.from_dict(sim2.to_dict())
@@ -1096,10 +1145,18 @@ static func _test_contracts(t: TestFramework) -> void:
 # ohne Vorstufe stillsteht, mit Vorstufe aber laeuft.
 # ------------------------------------------------------------------
 static func _test_production_chain(t: TestFramework) -> void:
-	# Vorstufe: 1000 Stueck Halbfertigteile pro Jahr, ohne Material.
-	var stage1 := _make_spec(&"VORSTUFE", 40_000.0, 8_000.0, 4.0, 21.0, 36_000.0)
+	# Die Produktion ist alles-oder-nichts: Eine Anlage laeuft nur,
+	# wenn ihr voller Tagesbedarf an Vorprodukten da ist - sonst
+	# steht sie im Leerlauf (mit Protokollvermerk). Die Mengen hier
+	# sind darauf abgestimmt.
+	#
+	# Vorstufe: 90.000 Halbfertigteile p.a. -> 250 am Tag.
+	var stage1 := _make_spec(&"VORSTUFE", 40_000.0, 8_000.0, 4.0, 21.0, 90_000.0)
 	stage1.output_product = &"halb"
-	# Endstufe: braucht 2 Halbfertigteile je Endprodukt.
+	# Endstufe: braucht 2 Halbfertigteile je Endprodukt. Bei
+	# 36.000 p.a. (100 am Tag) braucht sie 200 Halbfertigteile am
+	# Tag - die Vorstufe liefert 250, der Rest von 50 bleibt im
+	# Zwischenlager.
 	var stage2 := _make_spec(&"ENDSTUFE", 24_000.0, 5_400.0, 3.0, 18.0, 36_000.0)
 	stage2.input_product = &"halb"
 	stage2.input_product_per_unit = 2.0
@@ -1152,9 +1209,9 @@ static func _test_production_chain(t: TestFramework) -> void:
 		stage1_daily,
 		0.01
 	)
-	# Die Vorstufe braucht 2 Halbfertigteile je Endstueck. Ihre
-	# Tagesmenge ist doppelt so gross wie der Bedarf der Endstufe,
-	# deshalb bleibt ein Rest im Zwischenlager.
+	# Die Endstufe braucht 2 Halbfertigteile je Endstueck. Die
+	# Vorstufe liefert am selben Tag 250 Stueck - mehr als die 200,
+	# die die Endstufe braucht. Der Rest bleibt im Zwischenlager.
 	t.check_approx(
 		"Endstufe produziert ihre Tagesmenge",
 		finisher.quantity_this_year,
@@ -1186,23 +1243,31 @@ static func _test_production_chain(t: TestFramework) -> void:
 	var starved := SimulationEngine.new()
 	starved.specs[stage1.id] = stage1
 	starved.specs[stage2.id] = stage2
-	# Die Vorstufe liefert nur die Haelfte des Bedarfs.
+	# Die Vorstufe liefert nur 50 am Tag - ein Viertel des
+	# Tagesbedarfs der Endstufe (200).
 	var weak := stage1.with_overrides({"capacity_units_per_year": 18_000.0})
 	starved.specs[stage1.id] = weak
 	var weak_producer := MachineInstance.new(weak, "vor-1")
 	weak_producer.state = MachineInstance.State.ACTIVE
+	weak_producer.commissioned_year = 1
 	starved.machines["vor-1"] = weak_producer
 	var starving_end := MachineInstance.new(stage2, "end-1")
 	starving_end.state = MachineInstance.State.ACTIVE
+	starving_end.commissioned_year = 1
 	starved.machines["end-1"] = starving_end
 
-	starved.advance_day()
-	var weak_daily := 18_000.0 / 360.0
-	var possible := weak_daily / 2.0
+	# Die Produktion ist alles-oder-nichts: Die Endstufe laeuft nur
+	# an Tagen, an denen ihr voller Tagesbedarf (200) im
+	# Zwischenlager liegt. Bei 50 Stueck Zulauf am Tag ist das
+	# jeder vierte Tag - Tag 4 und Tag 8 in acht Tagen. Im Schnitt
+	# ist die Endstufe damit auf ein Viertel ihrer Kapazitaet
+	# gebremst: genau die Begrenzung durch die Vorstufe.
+	for _i in range(8):
+		starved.advance_day()
 	t.check_approx(
 		"Endstufe wird von der Vorstufe begrenzt",
 		starving_end.quantity_this_year,
-		possible,
+		2.0 * (36_000.0 / 360.0),
 		0.01
 	)
 

@@ -82,6 +82,22 @@ func operating_result() -> float:
 	return revenue_current_year - costs_current_year
 
 
+## Jahresergebnis der EXTERNEN Rechnung (fuer Eigenkapital und Bilanz).
+##
+## Kalkulatorische Zinsen sind KOSTEN der Kostenrechnung, aber kein
+## AUFWAND der externen Rechnung: ihnen steht keine Zahlung und kein
+## Wertverzehr eines Aktivpostens gegenueber. Wuerden sie das
+## Eigenkapital mindern, waere die Bilanz in jedem Jahr genau um die
+## kalkulatorischen Zinsen schief - die Passivseite sinkt, die
+## Aktivseite nicht. Deshalb werden sie hier wieder hinzugerechnet.
+##
+## `operating_result()` bleibt das Betriebsergebnis der
+## Kostenrechnung (mit kalkulatorischen Zinsen); dieses Ergebnis
+## sieht der Spieler und mit ihm rechnet die Investitionsrechnung.
+func external_result() -> float:
+	return operating_result() + imputed_interest_year
+
+
 ## Zahlungswirksam verfügbares Ergebnis (Cashflow).
 ## Gewinn + AfA + kalk. Zinsen (nicht zahlungswirksam) − Zinsen − Tilgung
 ## Zahlungswirksamer Cashflow des Geschäftsjahres.

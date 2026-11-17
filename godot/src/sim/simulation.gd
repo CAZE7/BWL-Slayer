@@ -317,6 +317,18 @@ func material_stock(material_type: StringName) -> float:
 	return float(material_inventory.get(material_type, 0.0))
 
 
+## Der Gesamtbestand ueber alle Materialarten in kg.
+##
+## Fuer Kennzahlen, die das gesamte Lager betrachten (z. B. der
+## Betriebs-Lab-Schnappschuss). Enthaelt auch den untypisierten
+## Einheitsbestand.
+func total_material_stock() -> float:
+	var total := inventory_material
+	for material_type in material_inventory:
+		total += float(material_inventory[material_type])
+	return total
+
+
 ## Setzt den Bestand einer Materialart.
 func set_material_stock(material_type: StringName, quantity_kg: float) -> void:
 	if material_type == &"":
@@ -639,7 +651,10 @@ func terminate_contract(contract_id: String) -> Dictionary:
 		}
 	if fee > 0.0:
 		economy.move_cash(-fee)
-	contracts.erase(contract_id)
+	# Wichtig: das Vertrags-Dictionary entfernen, nicht die ID.
+	# `erase(contract_id)` waere ein stilles No-op - der Spieler
+	# zahlt die Gebuehr und der Vertrag bleibt trotzdem bestehen.
+	contracts.erase(contract)
 	EventBus.notify(
 		"Vertrag gekuendigt",
 		"Die Kuendigungsgebuehr betraegt %s €." % _format_int(fee),
@@ -1401,7 +1416,12 @@ func _close_business_year() -> void:
 	economy.profit_current_year = economy.operating_result()
 	economy.move_cash(-economy.interest_paid_year)
 	economy.move_cash(-economy.dividend_current_year)
-	economy.equity += economy.profit_current_year - economy.dividend_current_year
+	# Das Eigenkapital folgt dem EXTERNEN Ergebnis: ohne
+	# kalkulatorische Zinsen. Sie sind Kosten der Kostenrechnung,
+	# kein Aufwand - ihnen steht kein Wertverzehr auf der Aktivseite
+	# gegenueber. Mit ihnen im Eigenkapital waere die Bilanz jedes
+	# Jahr genau um die kalkulatorischen Zinsen schief.
+	economy.equity += economy.external_result() - economy.dividend_current_year
 	if economy.dividend_current_year > 0.0:
 		economy.dividends_paid += economy.dividend_current_year
 

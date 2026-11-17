@@ -157,16 +157,29 @@ static func sanitize_save(save: Dictionary) -> Dictionary:
 	# Weltenfortschritt: Stufen sind immer boolesch, Punkte immer Zahlen.
 	out["worlds"] = _sanitize_worlds(out.get("worlds", {}))
 
-	# Statistiken und Aufgabenlisten sicherstellen
-	if typeof(out.get("statistics", {})) != TYPE_DICTIONARY:
-		out["statistics"] = base["statistics"]
-	if typeof(out.get("solved_tasks", {})) != TYPE_DICTIONARY:
+	# Statistiken und Aufgabenlisten sicherstellen.
+	#
+	# Wichtig: NICHT typeof(out.get(key, {})) pruefen! Bei einem
+	# fehlenden Schluessel liefert get() den Default - ein Dictionary -
+	# und die Pruefung ist immer wahr, der Schluessel wird also nie
+	# geschrieben. Fehlende Schluessel muessen ausdruecklich geprueft
+	# werden.
+	if not out.has("statistics") or typeof(out["statistics"]) != TYPE_DICTIONARY:
+		out["statistics"] = (base["statistics"] as Dictionary).duplicate(true)
+	else:
+		# Vorhandene Statistik: fehlende Einzelwerte ergaenzen.
+		var stats: Dictionary = out["statistics"]
+		var stats_base: Dictionary = base["statistics"]
+		for key in stats_base:
+			if not stats.has(key):
+				stats[key] = stats_base[key]
+	if not out.has("solved_tasks") or typeof(out["solved_tasks"]) != TYPE_DICTIONARY:
 		out["solved_tasks"] = {}
 
-	if typeof(out.get("company", {})) != TYPE_DICTIONARY:
-		out["company"] = base["company"]
-	if typeof(out.get("settings", {})) != TYPE_DICTIONARY:
-		out["settings"] = base["settings"]
+	if not out.has("company") or typeof(out["company"]) != TYPE_DICTIONARY:
+		out["company"] = (base["company"] as Dictionary).duplicate(true)
+	if not out.has("settings") or typeof(out["settings"]) != TYPE_DICTIONARY:
+		out["settings"] = (base["settings"] as Dictionary).duplicate(true)
 
 	return out
 

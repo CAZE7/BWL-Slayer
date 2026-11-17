@@ -82,6 +82,11 @@ static func _test_game_state_roundtrip(t: TestFramework) -> void:
 	)
 
 	# Ein Reset setzt alles auf den Ausgangszustand zurueck.
+	# Die Startanlage braucht den Maschinenkatalog: im Spiel laedt
+	# _ready() die Spezifikationen, eine Testinstanz (per new())
+	# muss sie selbst bereitstellen.
+	for catalog_spec in MachineCatalog.all():
+		sim2.specs[catalog_spec.id] = catalog_spec
 	sim2.reset()
 	t.check_true("Reset setzt den Tag zurueck", sim2.day == 0)
 	t.check_approx("Reset setzt die Kasse zurueck", sim2.economy.cash, 50000.0, 0.01)
