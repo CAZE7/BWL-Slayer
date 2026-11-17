@@ -1752,6 +1752,7 @@ func to_dict() -> Dictionary:
 		"completed_orders": completed_orders,
 		"deliveries": deliveries,
 		"material_deliveries": material_deliveries,
+		"contracts": contracts,
 		"inventory_material": inventory_material,
 		"material_inventory": material_inventory,
 		"intermediate_inventory": intermediate_inventory,
@@ -1781,6 +1782,10 @@ func from_dict(data: Dictionary) -> void:
 	completed_orders = data.get("completed_orders", [])
 	deliveries = data.get("deliveries", [])
 	material_deliveries = data.get("material_deliveries", [])
+	# Rahmenvertraege gehoeren zum Spielstand: eine zugesicherte
+	# Abnahmemenge ueberlebt den Neustart, sonst waere der Vertrag
+	# fuer den Spieler wertlos.
+	contracts = data.get("contracts", [])
 	inventory_material = float(data.get("inventory_material", 0.0))
 	# Die Materialbestände je Art. Die Schluessel sind Strings, weil
 	# JSON keine Schluessel als StringName kennt.

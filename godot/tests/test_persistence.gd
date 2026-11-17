@@ -89,7 +89,23 @@ static func _test_game_state_roundtrip(t: TestFramework) -> void:
 		sim2.specs[catalog_spec.id] = catalog_spec
 	sim2.reset()
 	t.check_true("Reset setzt den Tag zurueck", sim2.day == 0)
-	t.check_approx("Reset setzt die Kasse zurueck", sim2.economy.cash, 50000.0, 0.01)
+	# Die Startanlage wird aus dem Startkapital bezahlt: 50.000 €
+	# Eigenkapital stehen als 34.000 € Kasse plus 16.000 €
+	# Anlagevermoegen in der Bilanz. Die Bilanz geht auf.
+	var start_spec: MachineSpec = sim2.specs.get(MachineCatalog.CAR_A_ID)
+	var start_cost := start_spec.acquisition_cost if start_spec != null else 0.0
+	t.check_approx(
+		"Reset setzt die Kasse zurueck", sim2.economy.cash, 50000.0 - start_cost, 0.01
+	)
+	t.check_approx(
+		"Reset bindet das Startkapital in der Anlage",
+		sim2.economy.fixed_assets,
+		start_cost,
+		0.01
+	)
+	t.check_approx(
+		"Bilanz nach dem Reset ausgeglichen", sim2.economy.balance_check(), 0.0, 0.01
+	)
 	t.check_true("Reset legt die Startanlage an", not sim2.machines.is_empty())
 
 

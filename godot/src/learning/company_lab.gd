@@ -88,7 +88,10 @@ static func snapshot(sim: Node) -> Snapshot:
 
 	var economy: EconomyState = sim.economy
 	s.revenue = economy.revenue_current_year
-	s.fixed_costs = economy.fixed_costs_year
+	# Die laufenden Jahresfixkosten der betriebsbereiten Anlagen.
+	# economy.fixed_costs_year wird erst beim Jahresabschluss
+	# gesetzt - der Lab fragt aber den Betrieb von JETZT ab.
+	s.fixed_costs = sim.monthly_fixed_costs() * 12.0
 	s.depreciation = economy.depreciation_year
 	s.imputed_interest = economy.imputed_interest_year
 	s.interest_paid = economy.interest_paid_year
@@ -113,7 +116,11 @@ static func snapshot(sim: Node) -> Snapshot:
 		capacity += cap
 		weighted_price += m.spec.price_per_unit * cap
 		weighted_variable += m.spec.full_variable_cost_per_unit() * cap
-		weighted_contribution += m.spec.contribution_margin_per_unit() * cap
+		# Der volle Deckungsbeitrag inkl. Material: der Lab rechnet
+		# mit denselben voll beladenen Stueckkosten wie
+		# variable_cost_per_unit eine Zeile darueber. Ohne Material
+		# waere der Deckungsbeitrag geschoent.
+		weighted_contribution += m.spec.full_contribution_margin_per_unit() * cap
 	s.capacity = capacity
 	if capacity > 0.0:
 		s.price_per_unit = weighted_price / capacity

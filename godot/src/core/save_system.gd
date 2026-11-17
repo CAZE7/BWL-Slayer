@@ -69,6 +69,20 @@ static func create_default_save(slot_id: String, player_name: String = "CFO Deli
 			"autosave": true,
 			"camera_speed": 1.0,
 		},
+		# Die Lernstatistik. Die Schluessel entsprechen
+		# PlayerProgress.stats - sanitize_save() ergaenzt fehlende
+		# Einzelwerte aus genau dieser Vorlage.
+		"statistics": {
+			"questions_solved": 0,
+			"correct_answers": 0,
+			"missions_completed": 0,
+			"bosses_beaten": 0,
+			"streak": 0,
+			"best_streak": 0,
+			"crises_survived": 0,
+			"exam_best": 0,
+			"exam_attempts": 0,
+		},
 		"advisor_history": [],
 	}
 
