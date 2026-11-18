@@ -49,6 +49,7 @@ const SUITE_PATHS := [
 	"res://tests/test_persistence.gd",
 	"res://tests/test_learning.gd",
 	"res://tests/test_advisor.gd",
+	"res://tests/test_longrun.gd",
 ]
 
 

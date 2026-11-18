@@ -51,12 +51,31 @@ func _process(delta: float) -> void:
 	if not input_enabled:
 		return
 	_handle_input(delta)
-	# weiche Annäherung
-	zoom = lerpf(zoom, target_zoom, clampf(delta * 9.0, 0.0, 1.0))
-	target += pan_velocity * delta
-	pan_velocity = pan_velocity.lerp(Vector3.ZERO, clampf(delta * 8.0, 0.0, 1.0))
+	# Barrierefreiheit: Bei reduzierter Bewegung wirkt jede Eingabe
+	# sofort - keine Glaettung, keine Traegheit. Nachlaufende
+	# Kamerabewegung kann Schwindel ausloesen.
+	if _reduced_motion():
+		zoom = target_zoom
+		target += pan_velocity * delta
+		pan_velocity = Vector3.ZERO
+	else:
+		# weiche Annäherung
+		zoom = lerpf(zoom, target_zoom, clampf(delta * 9.0, 0.0, 1.0))
+		target += pan_velocity * delta
+		pan_velocity = pan_velocity.lerp(Vector3.ZERO, clampf(delta * 8.0, 0.0, 1.0))
 	_clamp_target()
 	_apply()
+
+
+## Liest die Barrierefreiheits-Einstellung aus dem Spielzustand.
+func _reduced_motion() -> bool:
+	var state := get_node_or_null("/root/GameState")
+	if state == null:
+		return false
+	var settings_value: Variant = state.get("settings")
+	if settings_value is Dictionary:
+		return bool((settings_value as Dictionary).get("reduced_motion", false))
+	return false
 
 
 func _handle_input(delta: float) -> void:

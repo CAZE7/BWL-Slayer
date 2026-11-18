@@ -202,6 +202,7 @@ func reset() -> void:
 	finished_goods = 0.0
 	loans.clear()
 	loan_sequence = 0
+	shares_outstanding = 1000.0
 	economy = EconomyState.new()
 	stats = {
 		"days_simulated": 0,
@@ -2184,8 +2185,9 @@ func financial_plan() -> Dictionary:
 
 
 ## Anzahl der Aktien, in die das Unternehmen gedanklich zerlegt ist.
-## Eine reine Rechengroesse fuer die Aktienbewertung.
-const SHARES_OUTSTANDING := 1000.0
+## Startwert 1.000; eine Kapitalerhoehung gibt zusaetzliche junge
+## Aktien aus und erhoeht die Zahl dauerhaft.
+var shares_outstanding: float = 1000.0
 
 ## Aktienbewertung des eigenen Unternehmens als Lernwerkzeug.
 ##
@@ -2198,7 +2200,7 @@ const SHARES_OUTSTANDING := 1000.0
 func share_valuation(
 	risk_free: float = 0.025, beta: float = 1.1, market_return: float = 0.08
 ) -> Dictionary:
-	var shares := SHARES_OUTSTANDING
+	var shares := shares_outstanding
 	# Basis ist das zuletzt FESTGESTELLTE Jahresergebnis (externe
 	# Sicht: ohne kalkulatorische Zinsen). Das laufende Jahr ist
 	# keine Basis – seine Kosten werden erst beim Jahresabschluss
@@ -2231,6 +2233,88 @@ func share_valuation(
 		"growth": growth,
 		"cost_of_equity": r,
 		"gordon_value": gordon_value,
+	}
+
+
+## Der aktuelle rechnerische Aktienkurs.
+##
+## Liefert der Gordon-Ansatz einen Wert (Dividende vorhanden,
+## r > g), gilt dieser. Ohne Dividende bleibt der Buchwert je Aktie
+## der Anker – konservativ, aber nie null, solange Eigenkapital da
+## ist.
+func current_share_price() -> float:
+	var valuation := share_valuation()
+	if valuation["gordon_value"] != null:
+		return float(valuation["gordon_value"])
+	return float(valuation["book_value_per_share"])
+
+
+## Kapitalerhoehung mit Bezugsrecht.
+##
+## `ratio_old_per_new`: Bezugsverhaeltnis alt:neu – bei 4 kommt auf
+## vier alte Aktien eine junge. `issue_price`: Ausgabekurs der
+## jungen Aktien. Er muss UNTER dem aktuellen Kurs liegen, sonst
+## zeichnet niemand – und ueber null.
+##
+## Wirkung: Die Einzahlung der neuen Aktionaere fliesst in die Kasse
+## und erhoeht das Eigenkapital (Aktivtausch gibt es hier nicht –
+## es ist Aussenfinanzierung). Der Kurs faellt rechnerisch auf den
+## Mischkurs; der Bezugsrechtswert gleicht den Altaktionaeren genau
+## diesen Verlust aus. Beide Werte kommen aus
+## BWLEngine.subscription_right – demselben Verfahren, das das
+## Lernsystem lehrt.
+func capital_increase(ratio_old_per_new: float, issue_price: float) -> Dictionary:
+	if ratio_old_per_new < 1.0:
+		return {"ok": false, "error": "Das Bezugsverhaeltnis muss mindestens 1:1 sein."}
+	if issue_price <= 0.0:
+		return {"ok": false, "error": "Der Ausgabekurs muss positiv sein."}
+	var old_price := current_share_price()
+	if old_price <= 0.0:
+		return {"ok": false, "error": "Ohne Eigenkapital ist keine Kapitalerhoehung platzierbar."}
+	if issue_price >= old_price:
+		return {
+			"ok": false,
+			"error": (
+				"Der Ausgabekurs (%s €) muss unter dem aktuellen Kurs (%s €) liegen,"
+				% [_format_int(issue_price), _format_int(old_price)]
+				+ " sonst zeichnet niemand die jungen Aktien."
+			),
+		}
+
+	var new_shares := shares_outstanding / ratio_old_per_new
+	var inflow := new_shares * issue_price
+	var right := BWLEngine.subscription_right({
+		"old_shares": shares_outstanding,
+		"new_shares": new_shares,
+		"old_share_price": old_price,
+		"issue_price_new": issue_price,
+		"nominal_value": 1.0,
+	})
+
+	economy.move_cash(inflow)
+	economy.equity += inflow
+	shares_outstanding += new_shares
+
+	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Kapitalerhöhung durchgeführt",
+		"%s junge Aktien zu %s € ausgegeben: %s € Zufluss. Mischkurs %s €, Bezugsrecht %s €." % [
+			_format_int(new_shares),
+			_format_int(issue_price),
+			_format_int(inflow),
+			_format_int(float(right["mixed_price"])),
+			String.num(float(right["subscription_right_value"]), 2).replace(".", ","),
+		],
+		"success"
+	)
+	return {
+		"ok": true,
+		"new_shares": new_shares,
+		"inflow": inflow,
+		"old_price": old_price,
+		"mixed_price": float(right["mixed_price"]),
+		"subscription_right_value": float(right["subscription_right_value"]),
+		"ratio": float(right["ratio"]),
 	}
 
 
@@ -2332,6 +2416,7 @@ func to_dict() -> Dictionary:
 		"finished_goods": finished_goods,
 		"loans": loans,
 		"loan_sequence": loan_sequence,
+		"shares_outstanding": shares_outstanding,
 		"stats": stats,
 	}
 
@@ -2385,6 +2470,7 @@ func from_dict(data: Dictionary) -> void:
 	# muessen den Neustart ueberleben.
 	loans = data.get("loans", [])
 	loan_sequence = int(data.get("loan_sequence", loans.size()))
+	shares_outstanding = float(data.get("shares_outstanding", 1000.0))
 	stats = data.get("stats", stats)
 
 

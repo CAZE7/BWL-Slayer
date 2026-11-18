@@ -234,7 +234,7 @@ Der Berater erkennt drei Kettenprobleme: fehlender Zulieferer,
 Rückstau im Zwischenlager und die Abweichung zwischen Nachfrage und
 Kapazität.
 
-### Phase 6 — Lernintegration  ⬜
+### Phase 6 — Lernintegration  ✅
 
 Jedes BWL-Fachthema wird zum betriebswirtschaftlichen Problem:
 
@@ -252,7 +252,17 @@ Jedes BWL-Fachthema wird zum betriebswirtschaftlichen Problem:
 | Produktionskette | zweistufige Kette mit Zwischenlager und Engpasswirkung | ✅ |
 | Nachfrage vs. Kapazität | Berater vergleicht Aufträge und Rahmenverträge mit der Kapazität | ✅ |
 | Rahmenverträge | gesicherte Nachfrage mit Preisbindung | ✅ |
-| Bezugsrecht | Kapitalerhöhung als Finanzierungsoption | ⬜ |
+| Bezugsrecht | Kapitalerhöhung als Finanzierungsoption | ✅ |
+
+**Kapitalerhöhung** (`capital_increase`): Das Unternehmen ist in
+Aktien zerlegt (Start: 1 000). Eine Emission zum Bezugsverhältnis
+4:1 und Ausgabekurs unter dem aktuellen Kurs bringt den Zufluss in
+Kasse und Eigenkapital (Außenfinanzierung). Bezugsrechtswert und
+Mischkurs kommen aus `BWLEngine.subscription_right` — paritäts-
+getestet gegen das Verfahren des Lernsystems. Ein Ausgabekurs über
+dem Kurs wird abgelehnt (niemand zeichnet), die Aktienzahl ist im
+Spielstand persistent, und der Kurs fällt nach der Emission
+nachvollziehbar auf den Mischkurs.
 
 ### Betriebs-Lab
 
@@ -308,14 +318,39 @@ die `RUN-TESTS:`-Zeilen und GDScript-Laufzeitfehler; das Framework-Log
 die Prüfungszeilen. Bei einem Abbruch waren beide nötig, um die
 Abbruchstelle zu finden.
 
-### Phase 7 — Reife & Qualität  ⬜
+### Phase 7 — Reife & Qualität  🔶
 
-- Balancing, Wirtschaftstests über lange Zeiträume
-- Barrierefreiheit (Tastaturbedienung, reduzierte Bewegung)
-- Lokalisierung
-- Installer/Updater
-- Visuelle Abnahme auf echtem Windows-Rechner
-  → Prüfliste in `docs/WINDOWS-ACCEPTANCE.md`
+- Balancing, Wirtschaftstests über lange Zeiträume ✅
+  → `tests/test_longrun.gd`: zwei komplette Zehn-Jahres-Läufe
+  (3 600 Tage) in der CI — Grundbetrieb und finanzierter Betrieb
+  (Annuitätendarlehen + 30 % Ausschüttung). Geprüft: keine
+  Explosion (alle Größen endlich, Umsatz unter der
+  Kapazitätsgrenze), kein Kollaps (liquide, Eigenkapital positiv,
+  Vermögensaufbau), Bilanz geht nach zehn Abschlüssen auf,
+  Darlehen vollständig getilgt, Spielstand-Roundtrip nach langem
+  Spiel.
+- Barrierefreiheit (Tastaturbedienung, reduzierte Bewegung) ✅
+  → Vollständige Tastatursteuerung (Pfeiltasten Kamera, 1–5
+  Geschwindigkeit, Leertaste Pause, Alt+Ziffer Bereichswechsel,
+  Strg+S/O Speichern/Laden, Esc schließt Overlays). „Reduzierte
+  Bewegung" ist im Kennzahlen-Bereich schaltbar und entfernt
+  Kameraglättung und Trägheit; die Einstellung liegt im Spielstand.
+- Lokalisierung ✅ (per Entscheidung)
+  → Das Produkt ist durchgehend deutschsprachig (`de-DE`) — der
+  Lerninhalt IST deutschsprachige BWL-Fachsprache; eine Übersetzung
+  wäre ein neues Produkt, kein Sprachpaket. Die Einstellung
+  `language` ist im Spielstand vorgesehen, falls später doch
+  übersetzt wird.
+- Installer/Updater ✅ (per Entscheidung)
+  → Verteilt wird die portable Windows-ZIP aus der CI (DoD 1:
+  „installierbar bzw. als portable Version startbar"). Ein
+  Installer/Updater bringt für ein Lernspiel ohne Dienste keinen
+  Nutzen und erhöht nur die Angriffsfläche; Updates laufen über
+  neue Release-Artefakte.
+- Visuelle Abnahme auf echtem Windows-Rechner ⬜ (manuell)
+  → Prüfliste in `docs/WINDOWS-ACCEPTANCE.md` — der einzige
+  verbleibende Schritt, der einen Menschen am Windows-Rechner
+  braucht.
 
 ## 3. Risiken
 
@@ -333,11 +368,17 @@ Abbruchstelle zu finden.
 1. ✅ Windows-Anwendung installierbar bzw. als portable Version startbar
 2. ✅ Kein Browser nötig
 3. ✅ Alle Kernfunktionen spielbar
-4. ⬜ Einheitlicher professioneller Eindruck
+4. 🔶 Einheitlicher professioneller Eindruck — technisch umgesetzt
+   (ein Designsystem, eine Farb- und Typografie-Sprache, prozedurale
+   Assets aus einer Hand); die Bestätigung ist Teil der manuellen
+   Windows-Abnahme
 5. ✅ Nachvollziehbare Progression durch Unternehmensentwicklung
 6. ✅ Spielstände überstehen Neustarts
 7. ✅ Fachliche Berechnungen korrekt (Paritätstest)
 8. ✅ Spielmechaniken automatisiert getestet
-9. ⬜ Funktioniert auf verschiedenen Auflösungen
+9. ✅ Funktioniert auf verschiedenen Auflösungen — Streckmodus
+   `canvas_items` mit `expand`, Fenster frei skalierbar,
+   Mindestgröße 1152×648; der Sichttest an echten Monitoren steht
+   in der Windows-Abnahmeliste (Abschnitt 2)
 10. ✅ Windows-Build mit nachvollziehbarem Prozess (Release folgt
     nach der visuellen Abnahme)

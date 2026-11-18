@@ -51,6 +51,11 @@ var _current_nav: String = "production"
 
 
 func _ready() -> void:
+	# Mindestfenstergroesse: Darunter wuerden Seitenleiste und
+	# Finanztabellen unlesbar. Streckmodus und Seitenverhaeltnis
+	# (canvas_items/expand) stehen in der Projektkonfiguration -
+	# zusammen traegt das beliebige Aufloesungen ab 1152x648.
+	get_window().min_size = Vector2i(1152, 648)
 	_build_ui()
 	EventBus.simulation_ticked.connect(_on_tick)
 	EventBus.economy_changed.connect(func(_s): _refresh_header())
@@ -1475,6 +1480,47 @@ func _fill_finance(box: VBoxContainer) -> void:
 			+ "das Modell keinen Wert. Buchwert und EPS bleiben die Anker."
 		))
 
+	# --- Kapitalerhoehung: Aussenfinanzierung ueber junge Aktien ----
+	_add_section(box, "KAPITALERHÖHUNG (BEZUGSRECHT)")
+	var share_price: float = Simulation.current_share_price()
+	_add_metric(box, "Aktien im Umlauf", String.num(Simulation.shares_outstanding, 0))
+	_add_metric(box, "Rechnerischer Kurs", BWLEngine.format_eur(share_price, 2))
+	if share_price > 1.0:
+		# Standardkondition: Bezugsverhaeltnis 4:1, Ausgabekurs
+		# 80 % des aktuellen Kurses. Der Zufluss haengt damit am
+		# eigenen Unternehmenswert - wer gut wirtschaftet, kann
+		# sich mehr Eigenkapital besorgen.
+		var issue_price: float = share_price * 0.80
+		var planned_shares: float = Simulation.shares_outstanding / 4.0
+		box.add_child(_muted(
+			"4:1 zu %s €: %s junge Aktien, Zufluss %s. Der Kurs fällt "
+			% [
+				BWLEngine.format_eur(issue_price, 2),
+				String.num(planned_shares, 0),
+				BWLEngine.format_eur(planned_shares * issue_price, 0),
+			]
+			+ "auf den Mischkurs; das Bezugsrecht gleicht den Altaktionären "
+			+ "den Verlust aus."
+		))
+		var increase_btn := Button.new()
+		increase_btn.text = "Kapitalerhöhung durchführen"
+		increase_btn.custom_minimum_size = Vector2(0, 32)
+		increase_btn.pressed.connect(func():
+			var result := Simulation.capital_increase(4.0, Simulation.current_share_price() * 0.80)
+			if not bool(result.get("ok", false)):
+				EventBus.notify(
+					"Kapitalerhöhung abgelehnt",
+					String(result.get("error", "Die Emission ist nicht platzierbar.")),
+					"warning"
+				)
+			_refresh_sidebar()
+		)
+		box.add_child(increase_btn)
+	else:
+		box.add_child(_muted(
+			"Ohne substanziellen Kurs ist keine Emission platzierbar."
+		))
+
 	# --- Lohmann-Ruchti: Innenfinanzierung --------------------------
 	_add_section(box, "KAPAZITÄTSERWEITERUNG (LOHMANN-RUCHTI)")
 	var outlook: Dictionary = Simulation.lohmann_ruchti_outlook(3)
@@ -1819,6 +1865,27 @@ func _fill_stats(box: VBoxContainer) -> void:
 	_add_metric(box, "Aufträge erfüllt", "%d" % int(Simulation.stats.get("orders_completed", 0)))
 	_add_metric(box, "Aufträge storniert", "%d" % int(Simulation.stats.get("orders_cancelled", 0)))
 	_add_metric(box, "Maschinen im Betrieb", "%d" % Simulation.active_machines().size())
+
+	# --- Barrierefreiheit ------------------------------------------
+	_add_section(box, "BARRIEREFREIHEIT")
+	var motion_toggle := CheckButton.new()
+	motion_toggle.text = "Reduzierte Bewegung"
+	motion_toggle.tooltip_text = (
+		"Schaltet Kameraglättung und Trägheit ab: jede Eingabe wirkt "
+		+ "sofort, ohne nachlaufende Animation."
+	)
+	motion_toggle.button_pressed = bool(GameState.settings.get("reduced_motion", false))
+	motion_toggle.add_theme_font_size_override("font_size", 12)
+	motion_toggle.toggled.connect(func(enabled: bool):
+		GameState.settings["reduced_motion"] = enabled
+		EventBus.settings_changed.emit(GameState.settings)
+	)
+	box.add_child(motion_toggle)
+	box.add_child(_muted(
+		"Vollständig per Tastatur spielbar: Pfeiltasten bewegen die "
+		+ "Kamera, 1–5 wählen die Geschwindigkeit, Leertaste pausiert, "
+		+ "Alt+Ziffer wechselt den Bereich, Strg+S/O speichert und lädt."
+	))
 
 
 # ==================================================================

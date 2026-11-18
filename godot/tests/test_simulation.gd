@@ -27,6 +27,8 @@ static func run(t: TestFramework) -> void:
 	_test_dividend_policy(t)
 	t.suite("Simulation · Finanzplan & Aktienbewertung")
 	_test_financial_tools(t)
+	t.suite("Simulation · Kapitalerhöhung & Bezugsrecht")
+	_test_capital_increase(t)
 
 
 # ------------------------------------------------------------------
@@ -726,3 +728,75 @@ static func _test_financial_tools(t: TestFramework) -> void:
 	var empty := SimulationEngine.new()
 	var none := empty.lohmann_ruchti_outlook(5)
 	t.check_true("Lohmann-Ruchti: ohne Anlagen abgelehnt", not bool(none.get("ok", false)))
+
+
+# ------------------------------------------------------------------
+# Kapitalerhoehung mit Bezugsrecht: Aussenfinanzierung ueber junge
+# Aktien. Der Bezugsrechtswert gleicht den Altaktionaeren den
+# Kursverlust zum Mischkurs aus - gerechnet mit demselben Verfahren,
+# das das Lernsystem lehrt (BWLEngine.subscription_right).
+# ------------------------------------------------------------------
+static func _test_capital_increase(t: TestFramework) -> void:
+	var sim := SimulationEngine.new()
+
+	# Frischer Betrieb: kein festgestellter Gewinn, keine Dividende.
+	# Der Kurs ist der Buchwert je Aktie: 50.000 / 1.000 = 50 EUR.
+	t.check_approx("Startkurs = Buchwert je Aktie", sim.current_share_price(), 50.0, 0.0001)
+	t.check_approx("1.000 Aktien zu Beginn", sim.shares_outstanding, 1_000.0, 0.01)
+
+	# Bezugsverhaeltnis 4:1 zum Ausgabekurs 40 EUR:
+	# 250 junge Aktien x 40 EUR = 10.000 EUR Zufluss.
+	var cash_before := sim.economy.cash
+	var equity_before := sim.economy.equity
+	var result := sim.capital_increase(4.0, 40.0)
+	t.check_true("Kapitalerhoehung durchgefuehrt", bool(result.get("ok", false)))
+	t.check_approx("250 junge Aktien", float(result.get("new_shares", 0.0)), 250.0, 0.01)
+	t.check_approx("Zufluss 10.000", float(result.get("inflow", 0.0)), 10_000.0, 0.01)
+	t.check_approx("Kasse steigt um den Zufluss", sim.economy.cash, cash_before + 10_000.0, 0.01)
+	t.check_approx("Eigenkapital steigt um den Zufluss", sim.economy.equity, equity_before + 10_000.0, 0.01)
+	t.check_approx("1.250 Aktien danach", sim.shares_outstanding, 1_250.0, 0.01)
+	t.check_approx("Bilanz stimmt nach Kapitalerhoehung", sim.economy.balance_check(), 0.0, 1.0)
+
+	# Mischkurs: (1.000 x 50 + 250 x 40) / 1.250 = 48 EUR.
+	t.check_approx("Mischkurs 48", float(result.get("mixed_price", 0.0)), 48.0, 0.01)
+	# Bezugsrecht: (50 - 40) / (4 + 1) = 2 EUR.
+	t.check_approx("Bezugsrecht 2", float(result.get("subscription_right_value", 0.0)), 2.0, 0.01)
+
+	# Paritaet mit der Engine-Funktion des Lernsystems.
+	var reference: Dictionary = BWLEngine.subscription_right({
+		"old_shares": 1_000.0,
+		"new_shares": 250.0,
+		"old_share_price": 50.0,
+		"issue_price_new": 40.0,
+		"nominal_value": 1.0,
+	})
+	t.check_approx(
+		"Paritaet: Bezugsrechtswert",
+		float(result.get("subscription_right_value", 0.0)),
+		float(reference["subscription_right_value"]),
+		0.0001
+	)
+	t.check_approx(
+		"Paritaet: Mischkurs",
+		float(result.get("mixed_price", 0.0)),
+		float(reference["mixed_price"]),
+		0.0001
+	)
+
+	# Nach der Erhoehung sinkt der rechnerische Kurs auf den
+	# Buchwert je Aktie der groesseren Aktienzahl: 60.000 / 1.250 = 48.
+	t.check_approx("Kurs nach Erhoehung = Mischkurs", sim.current_share_price(), 48.0, 0.01)
+
+	# Ein Ausgabekurs ueber dem aktuellen Kurs wird abgelehnt:
+	# niemand zeichnet junge Aktien teurer als die alten.
+	var overpriced := sim.capital_increase(4.0, 60.0)
+	t.check_true("Ausgabekurs ueber Kurs abgelehnt", not bool(overpriced.get("ok", false)))
+	# Ein Bezugsverhaeltnis unter 1:1 ist unzulaessig.
+	var tiny_ratio := sim.capital_increase(0.5, 10.0)
+	t.check_true("Bezugsverhaeltnis unter 1:1 abgelehnt", not bool(tiny_ratio.get("ok", false)))
+	t.check_approx("Abgelehnte Erhoehung veraendert nichts", sim.shares_outstanding, 1_250.0, 0.01)
+
+	# Die Aktienzahl ueberlebt den Spielstand.
+	var loaded := SimulationEngine.new()
+	loaded.from_dict(sim.to_dict())
+	t.check_approx("Aktienzahl im Spielstand", loaded.shares_outstanding, 1_250.0, 0.01)

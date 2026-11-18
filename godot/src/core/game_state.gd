@@ -42,9 +42,11 @@ func _ready() -> void:
 
 
 func _on_settings_changed(new_settings: Dictionary) -> void:
+	# Nur uebernehmen, NICHT erneut emittieren: Diese Funktion hoert
+	# selbst auf settings_changed - ein Re-Emit waere eine
+	# Endlosschleife, sobald irgendjemand das Signal ausloest.
 	for key in new_settings:
 		settings[key] = new_settings[key]
-	EventBus.settings_changed.emit(settings)
 
 
 ## Wechselt den Bildschirm.
