@@ -154,9 +154,45 @@ Restbuchwert am Horizont ein.
 Die Kapazitäten sind aufeinander abgestimmt: Eine Endstufe braucht
 2 × 36 000 = 72 000 Halbfertigteile, eine Vorstufe liefert genau
 72 000. Die Vorstufe ist damit ausreichend, aber nicht
-überdimensioniert – wer eine zweite Vorstufe baut, läuft in den
-Rückstau und bindet Kapital ohne Erlös. Bei voller Auslastung
-erwirtschaftet die Kette rund 17 % Umsatzrendite.
+überdimensioniert – wer eine zweite Vorstufe baut, bezahlt deren
+Fixkosten, ohne dass die Kette mehr absetzen kann. Bei voller
+Auslastung erwirtschaftet die Kette rund 17 % Umsatzrendite.
+
+### Produktion kostet und folgt der Nachfrage  ✅
+
+Zwei zusammenhängende Fehler machten die Fertigung wirtschaftlich
+unwirklich:
+
+1. **Variable Fertigungskosten fehlten vollständig.** Weder Kasse
+   noch GuV kannten die variablen Stückkosten (z. B. 26 € je Stück
+   bei der Startanlage). Gewinn und Liquidität waren systematisch
+   überhöht; der Break-even des Lernsystems widersprach der echten
+   GuV. Jetzt fließen die variablen Kosten mit jeder gefertigten
+   Einheit zahlungswirksam ab (`_produce_one_day`) und stehen im
+   Jahresabschluss als Aufwand (`variable_costs_year`) – auf
+   derselben Mengenbasis, sonst ginge die Bilanz nicht auf.
+2. **Umsatz ohne Produktion.** Die Auftragsabwicklung verteilte die
+   *theoretische Kapazität* statt der tatsächlichen Fertigung:
+   Umsatz floss selbst dann, wenn die Maschinen wegen Materialmangel
+   stillstanden. Jetzt wird ausschließlich aus dem
+   **Fertigwarenbestand** ausgeliefert, den die Produktion real
+   gefüllt hat.
+
+Damit die variablen Kosten das Spiel nicht in blinde
+Überproduktion treiben, **folgt die Produktion der Nachfrage**:
+Endstufen fertigen nur, was offene Aufträge noch brauchen und der
+Fertigwarenbestand nicht deckt; Vorstufen fertigen bedarfsgerecht
+den heutigen Abruf der Endstufen (abzüglich Zwischenlager). Eine
+Anlage ohne Aufträge steht still und verursacht keine variablen
+Kosten – Auslastung wird damit zur echten wirtschaftlichen Größe,
+und die Fixkostendegression ist im Spiel erlebbar. Wird ein Auftrag
+storniert, fallen seine gefertigten Stücke in den Fertigwaren-
+bestand zurück und bedienen den nächsten Auftrag.
+
+Bilanzielle Vereinfachung (dokumentiert): Der Fertigwarenbestand
+wird mit 0 bewertet; seine Herstellkosten sind beim Entstehen
+bereits als Aufwand und Auszahlung erfasst (strengstes
+Vorsichtsprinzip, hält die Bilanzlogik einfach).
 
 Der Berater erkennt drei Kettenprobleme: fehlender Zulieferer,
 Rückstau im Zwischenlager und die Abweichung zwischen Nachfrage und

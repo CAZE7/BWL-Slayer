@@ -40,6 +40,10 @@ var fixed_costs_year: float = 0.0
 ## Materialaufwand p.a. (zahlungswirksam) – getrennt ausgewiesen, damit
 ## die GuV zwischen umsatzabhaengigen und unabhaengigen Kosten trennt.
 var material_costs_year: float = 0.0
+## Variable Fertigungskosten p.a. (zahlungswirksam): Energie,
+## Hilfsstoffe, Akkordloehne – alles, was mit jeder gefertigten
+## Einheit anfaellt, ausser dem getrennt erfassten Material.
+var variable_costs_year: float = 0.0
 ## Abschreibungen p.a. (nicht zahlungswirksam)
 var depreciation_year: float = 0.0
 ## kalkulatorische Zinsen p.a. (nicht zahlungswirksam)
@@ -259,6 +263,7 @@ func to_dict() -> Dictionary:
 		"costs_current_year": costs_current_year,
 		"fixed_costs_year": fixed_costs_year,
 		"material_costs_year": material_costs_year,
+		"variable_costs_year": variable_costs_year,
 		"depreciation_year": depreciation_year,
 		"imputed_interest_year": imputed_interest_year,
 		"interest_paid_year": interest_paid_year,
@@ -288,6 +293,7 @@ func from_dict(data: Dictionary) -> void:
 	costs_current_year = float(data.get("costs_current_year", 0.0))
 	fixed_costs_year = float(data.get("fixed_costs_year", 0.0))
 	material_costs_year = float(data.get("material_costs_year", 0.0))
+	variable_costs_year = float(data.get("variable_costs_year", 0.0))
 	depreciation_year = float(data.get("depreciation_year", 0.0))
 	imputed_interest_year = float(data.get("imputed_interest_year", 0.0))
 	interest_paid_year = float(data.get("interest_paid_year", 0.0))

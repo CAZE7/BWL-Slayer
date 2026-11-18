@@ -70,6 +70,20 @@ var material_inventory: Dictionary = {}
 ## wirklich gekoppelt: zu wenig Vorstufenleistung bremst die
 ## Endstufe aus.
 var intermediate_inventory: Dictionary = {}
+## Fertigwarenbestand: produzierte, noch nicht ausgelieferte
+## Endprodukt-Einheiten.
+##
+## Die Produktion fuellt diesen Pool, die Auftragsabwicklung
+## entnimmt daraus. Wird ein Auftrag storniert, fallen seine schon
+## gefertigten Stuecke in den Pool zurueck und bedienen den
+## naechsten Auftrag – gefertigte Ware verschwindet nicht einfach.
+##
+## Bilanzielle Vereinfachung (dokumentiert): Der Fertigwarenbestand
+## wird mit 0 bewertet. Seine Herstellkosten (variable Kosten,
+## Material) sind beim Entstehen bereits als Aufwand und Auszahlung
+## erfasst – das ist das Vorsichtsprinzip in seiner strengsten Form
+## und haelt die Bilanzlogik des Spiels einfach.
+var finished_goods: float = 0.0
 var day_accumulator: float = 0.0
 
 ## Produktionseinstellungen (vom Spieler steuerbar)
@@ -172,6 +186,7 @@ func reset() -> void:
 	inventory_material = 0.0
 	material_inventory.clear()
 	intermediate_inventory.clear()
+	finished_goods = 0.0
 	economy = EconomyState.new()
 	stats = {
 		"days_simulated": 0,
@@ -1026,12 +1041,65 @@ func _average_material_price() -> float:
 func _progress_production() -> void:
 	if not production_enabled:
 		return
+	# Produziert wird fuer die Nachfrage, nicht ins Blaue: Jede
+	# Endstufe fertigt nur, was offene Auftraege noch brauchen und
+	# der Fertigwarenbestand nicht schon deckt. Eine Anlage ohne
+	# Auftraege steht still – und verursacht dann auch keine
+	# variablen Kosten. Genau das ist der Unterschied zwischen
+	# Fixkosten (laufen immer) und variablen Kosten (laufen mit der
+	# Menge): Auslastung wird zur echten wirtschaftlichen Groesse.
+	var backlog := 0.0
+	for order in orders:
+		if String(order.get("status", "")) != "accepted":
+			continue
+		backlog += maxf(
+			0.0,
+			float(order.get("quantity", 0.0)) - float(order.get("produced", 0.0))
+		)
+	backlog = maxf(0.0, backlog - finished_goods)
+
+	# Tagesziele der Endstufen: der offene Bedarf wird in
+	# Maschinenreihenfolge verteilt, gedeckelt von der jeweiligen
+	# Tageskapazitaet. Aus den Zielen der Endstufen ergibt sich der
+	# heutige Zwischenproduktbedarf der Vorstufen.
+	var end_targets: Dictionary = {}
+	var input_need: Dictionary = {}
+	var remaining := backlog
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if not instance.is_operational():
+			continue
+		if instance.spec.is_intermediate_stage():
+			continue
+		var daily_cap := instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+		var target := minf(daily_cap, remaining)
+		remaining -= target
+		end_targets[instance_id] = target
+		var product := instance.spec.input_product
+		if product != &"" and target > 0.0:
+			input_need[product] = (
+				float(input_need.get(product, 0.0))
+				+ target * instance.spec.input_product_per_unit
+			)
+
+	# Das Zwischenlager deckt einen Teil des heutigen Bedarfs: Nur
+	# der Rest muss heute von den Vorstufen gefertigt werden.
+	for product in input_need:
+		input_need[product] = maxf(
+			0.0,
+			float(input_need[product]) - intermediate_stock(StringName(product))
+		)
+
 	# Die Produktionskette laeuft stufenweise: zuerst die Vorstufen
 	# (sie legen ihr Zwischenprodukt ins Lager), danach die Folgestufen
 	# (sie entnehmen es wieder). Dadurch kann die Endstufe an einem
 	# Tag noch das nutzen, was die Vorstufe am selben Tag hergestellt
-	# hat – und ein Rueckstau in der Vorstufe bremst die Endstufe
-	# sichtbar aus.
+	# hat – und eine schwache Vorstufe bremst die Endstufe sichtbar.
+	#
+	# Vorstufen fertigen bedarfsgerecht: nur so viel, wie den
+	# Endstufen heute fehlt (Bedarf minus Zwischenlager). Das haelt
+	# das Zwischenlager klein – Kapital wird nicht in Bestaenden
+	# vergraben, die niemand abruft.
 	for stage in 2:
 		for instance_id in machines:
 			var instance: MachineInstance = machines[instance_id]
@@ -1043,7 +1111,16 @@ func _progress_production() -> void:
 			var is_final := instance.spec.is_final_stage()
 			if (stage == 0) == is_final:
 				continue
-			_produce_one_day(instance)
+			var target := 0.0
+			if instance.spec.is_intermediate_stage():
+				var product := instance.spec.output_product
+				var open_need := float(input_need.get(product, 0.0))
+				var daily_cap := instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+				target = minf(daily_cap, open_need)
+				input_need[product] = maxf(0.0, open_need - target)
+			else:
+				target = float(end_targets.get(instance_id, 0.0))
+			_produce_one_day(instance, target)
 
 
 ## Die Tagesproduktion einer einzelnen Anlage.
@@ -1051,21 +1128,25 @@ func _progress_production() -> void:
 ## Deckelung durch Material (Rohstoff) und durch das Zwischenprodukt
 ## der Vorstufe. Fehlt eine dieser Grundlagen, laeuft die Anlage im
 ## Leerlauf – mit Vermerk im Maschinenprotokoll.
-func _produce_one_day(instance: MachineInstance) -> void:
-	var daily_capacity := instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+func _produce_one_day(instance: MachineInstance, target_units: float) -> void:
+	# Ohne Bedarf keine Produktion: Die Anlage steht still. Das ist
+	# kein Stoerfall und wird nicht protokolliert – fehlende
+	# Nachfrage sieht der Spieler an der Auslastung.
+	if target_units <= 0.0:
+		return
 
-	# 1) Rohstoff der Vorstufe
+	# 1) Rohstoff der Stufe
 	var material_type := instance.spec.consumed_material_type()
-	var daily_material_needed := daily_capacity * instance.spec.material_per_unit
+	var material_needed := target_units * instance.spec.material_per_unit
 	var material_available := true
-	if daily_material_needed > 0.0:
+	if material_needed > 0.0:
 		# Jede Anlage verbraucht ihre eigene Materialart. Ein
 		# Bestand ersetzt keinen anderen: Wer Stahl hat, kann keine
 		# Verpackung produzieren.
 		var stock := material_stock(material_type)
-		material_available = stock >= daily_material_needed
+		material_available = stock >= material_needed
 		if material_available:
-			set_material_stock(material_type, stock - daily_material_needed)
+			set_material_stock(material_type, stock - material_needed)
 
 	if not material_available:
 		# Materialengpass -> Maschine läuft im Leerlauf
@@ -1078,13 +1159,13 @@ func _produce_one_day(instance: MachineInstance) -> void:
 
 	# 2) Zwischenprodukt der Vorstufe
 	var input_product := instance.spec.input_product
-	var daily_input_needed := daily_capacity * instance.spec.input_product_per_unit
+	var input_needed := target_units * instance.spec.input_product_per_unit
 	var input_available := true
-	if input_product != &"" and daily_input_needed > 0.0:
+	if input_product != &"" and input_needed > 0.0:
 		var in_stock := intermediate_stock(input_product)
-		input_available = in_stock >= daily_input_needed
+		input_available = in_stock >= input_needed
 		if input_available:
-			set_intermediate_stock(input_product, in_stock - daily_input_needed)
+			set_intermediate_stock(input_product, in_stock - input_needed)
 
 	if not input_available:
 		# Die Vorstufe liefert nicht genug -> Endstufe im Leerlauf.
@@ -1096,15 +1177,29 @@ func _produce_one_day(instance: MachineInstance) -> void:
 		return
 
 	# 3) Produktion und Weiterleitung
-	instance.quantity_this_year += daily_capacity
+	instance.quantity_this_year += target_units
 	instance.maintenance_cost += instance.spec.fixed_operating_costs / float(DAYS_PER_YEAR)
+
+	# Variable Fertigungskosten sind zahlungswirksam: Energie,
+	# Hilfsstoffe, Akkordloehne fallen mit jedem gefertigten Stueck
+	# an. Das Material ist hier NICHT enthalten – es wurde beim
+	# Einkauf bezahlt und wird beim Verbrauch als Aufwand erfasst.
+	# Der Aufwand der variablen Kosten wird im Jahresabschluss
+	# gebucht (variable_costs_year), hier nur die Zahlung.
+	var variable_cash := target_units * instance.spec.variable_cost_per_unit
+	if variable_cash > 0.0:
+		economy.move_cash(-variable_cash)
 
 	# Eine Vorstufe legt ihr Erzeugnis im Zwischenlager ab. Es wird
 	# nicht bewertet wie ein Endprodukt – der Wert steckt in der
-	# Folgestufe, die es weiterverarbeitet.
+	# Folgestufe, die es weiterverarbeitet. Eine Endstufe legt ihre
+	# Ware in den Fertigwarenbestand, aus dem die Auftraege
+	# ausgeliefert werden.
 	var output_product := instance.spec.output_product
 	if output_product != &"":
-		set_intermediate_stock(output_product, intermediate_stock(output_product) + daily_capacity)
+		set_intermediate_stock(output_product, intermediate_stock(output_product) + target_units)
+	else:
+		finished_goods += target_units
 
 	var utilization := instance.spec.utilization_at(instance.quantity_this_year)
 	stats["peak_utilization"] = maxf(float(stats["peak_utilization"]), utilization)
@@ -1121,21 +1216,12 @@ func _process_customer_orders() -> void:
 	if not accepting_orders:
 		return
 
-	# Tagesproduktion aller betriebsbereiten Endstufen. Sie ist die
-	# Menge, die an die offenen Auftraege verteilt werden kann.
-	#
-	# Nur Endstufen zaehlen: eine Vorstufe erzeugt ein Zwischenprodukt
-	# fuer die naechste Stufe, nicht Ware fuer den Kunden. Sonst
-	# waere die Kette doppelt verkauft – einmal als Zwischenprodukt
-	# und einmal als Endprodukt.
-	var daily_production := 0.0
-	for instance_id in machines:
-		var instance: MachineInstance = machines[instance_id]
-		if not instance.is_operational():
-			continue
-		if instance.spec.is_intermediate_stage():
-			continue
-		daily_production += instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+	# Ausgeliefert wird NUR, was tatsaechlich gefertigt wurde: der
+	# Fertigwarenbestand. Frueher wurde hier die theoretische
+	# Kapazitaet verteilt – dann floss Umsatz, obwohl die Maschinen
+	# wegen Materialmangel stillstanden. Ware ohne Produktion gibt
+	# es nicht.
+	var daily_production := finished_goods
 
 	# Forderungen einziehen, deren Zahlungsziel erreicht ist.
 	_collect_receivables()
@@ -1158,6 +1244,11 @@ func _process_customer_orders() -> void:
 			order["status"] = "cancelled"
 			order["cancelled_day"] = day
 			stats["orders_cancelled"] = int(stats.get("orders_cancelled", 0)) + 1
+			# Die fuer diesen Auftrag gefertigten Stuecke fallen in
+			# den Fertigwarenbestand zurueck und bedienen den
+			# naechsten Auftrag. Gefertigte Ware verschwindet nicht,
+			# nur weil ein Kunde abspringt.
+			daily_production += produced_for_order
 			EventBus.notify(
 				"Auftrag nicht erfüllbar",
 				"Die Lieferfrist für %s Stück ist verstrichen. Der Auftrag wurde storniert." % _format(required),
@@ -1203,6 +1294,10 @@ func _process_customer_orders() -> void:
 				"success"
 			)
 
+	# Was heute nicht zugeteilt wurde, bleibt im Fertigwarenbestand
+	# fuer die naechsten Auftraege liegen.
+	finished_goods = daily_production
+
 	orders = orders.filter(func(o): return o["status"] == "accepted")
 
 
@@ -1215,9 +1310,9 @@ func _process_customer_orders() -> void:
 ##  1. Grundmenge: ein fester Anteil der installierten Kapazitaet
 ##     wird bestellt. Wer mehr Kapazitaet baut, bekommt auch mehr
 ##     Auftrage – sonst waere eine Investition sinnlos.
-##  2. Der Preis richtet sich nach dem Deckungsbeitrag der Anlage
-##     plus einem festen Aufschlag. Uebersteigt der Preis den
-##     Deckungsbeitrag, ist der Auftrag unrentabel und wird gar
+##  2. Der Preis orientiert sich am Marktpreis der Anlagen und
+##     liegt nie unter den variablen Stueckkosten. Ein Auftrag,
+##     bei dem jedes Stueck bares Geld verlieren wuerde, wird gar
 ##     nicht erst angeboten.
 ##  3. Die Menge schwankt in einem definierten Band. Die Schwankung
 ##     folgt einer deterministischen Funktion aus Tag und Jahr – kein
@@ -1411,6 +1506,23 @@ func _close_business_year() -> void:
 	economy.material_costs_year = material_cost
 	economy.costs_current_year += material_cost
 	economy.costs_total += material_cost
+
+	# Variable Fertigungskosten buchen.
+	#
+	# Sie sind mit jeder gefertigten Einheit zahlungswirksam von
+	# der Kasse abgeflossen (siehe _produce_one_day). Hier werden
+	# sie als Aufwand des Jahres erfasst – auf derselben Basis
+	# (tatsaechlich gefertigte Menge), sonst ginge die Bilanz
+	# nicht auf. Ohne diese Buchung waere die Fertigung in der
+	# GuV kostenlos und jeder Break-even eine Luege.
+	var variable_cost := 0.0
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if instance.is_operational():
+			variable_cost += instance.spec.variable_cost_per_unit * instance.quantity_this_year
+	economy.variable_costs_year = variable_cost
+	economy.costs_current_year += variable_cost
+	economy.costs_total += variable_cost
 	# Den Lagerbestand je Materialart bewerten.
 	_revalue_inventory()
 
@@ -1826,6 +1938,7 @@ func to_dict() -> Dictionary:
 		"inventory_material": inventory_material,
 		"material_inventory": material_inventory,
 		"intermediate_inventory": intermediate_inventory,
+		"finished_goods": finished_goods,
 		"stats": stats,
 	}
 
@@ -1872,6 +1985,9 @@ func from_dict(data: Dictionary) -> void:
 	var stored_intermediate: Dictionary = data.get("intermediate_inventory", {})
 	for product_key in stored_intermediate:
 		intermediate_inventory[StringName(product_key)] = float(stored_intermediate[product_key])
+	# Der Fertigwarenbestand gehoert zum Spielstand: gefertigte,
+	# noch nicht ausgelieferte Ware ueberlebt den Neustart.
+	finished_goods = float(data.get("finished_goods", 0.0))
 	stats = data.get("stats", stats)
 
 

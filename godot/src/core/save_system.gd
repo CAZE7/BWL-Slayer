@@ -35,6 +35,8 @@ static func create_default_save(slot_id: String, player_name: String = "CFO Deli
 			"revenue_current_year": 0.0,
 			"costs_current_year": 0.0,
 			"fixed_costs_year": 0.0,
+			"material_costs_year": 0.0,
+			"variable_costs_year": 0.0,
 			"depreciation_year": 0.0,
 			"imputed_interest_year": 0.0,
 			"interest_paid_year": 0.0,

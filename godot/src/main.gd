@@ -1129,6 +1129,17 @@ func _fill_storage(box: VBoxContainer) -> void:
 				note.add_theme_color_override("font_color", UI["danger"])
 				box.add_child(note)
 
+	# Fertigwaren: produziert, aber noch nicht ausgeliefert -
+	# zum Beispiel aus einem stornierten Auftrag. Sie bedienen den
+	# naechsten Auftrag zuerst.
+	var finished: float = Simulation.finished_goods
+	if finished >= 1.0:
+		var fg_row := Label.new()
+		fg_row.text = "Fertigwaren: %s Stück" % String.num(finished, 0)
+		fg_row.add_theme_font_size_override("font_size", 12)
+		fg_row.add_theme_color_override("font_color", UI["text"])
+		box.add_child(fg_row)
+
 	# Einkauf je Materialart. Zwei Wege: sofort kaufen (die Ware ist
 	# sofort da) oder mit Lieferzeit bestellen (die Zahlung erfolgt
 	# sofort, die Ware kommt in einigen Tagen). Der Spieler muss also
@@ -1229,6 +1240,7 @@ func _fill_finance(box: VBoxContainer) -> void:
 	_add_section(box, "GEWINN- UND VERLUSTRECHNUNG")
 	_add_metric(box, "Umsatz", BWLEngine.format_eur(eco.revenue_current_year, 0))
 	_add_metric(box, "Materialkosten", BWLEngine.format_eur(eco.material_costs_year, 0))
+	_add_metric(box, "Variable Fertigungskosten", BWLEngine.format_eur(eco.variable_costs_year, 0))
 	_add_metric(box, "Fixkosten", BWLEngine.format_eur(eco.fixed_costs_year, 0))
 	_add_metric(box, "Abschreibung", BWLEngine.format_eur(eco.depreciation_year, 0))
 	_add_metric(box, "Kalkulatorische Zinsen", BWLEngine.format_eur(eco.imputed_interest_year, 0))

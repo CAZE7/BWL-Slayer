@@ -67,6 +67,21 @@ static func _make_spec(
 	return spec
 
 
+## Ein grosser offener Auftrag fuer Ketten-Tests: Produziert wird
+## fuer die Nachfrage, also brauchen Produktionstests einen Bedarf.
+static func _chain_order() -> Dictionary:
+	return {
+		"id": "ketten-auftrag",
+		"status": "accepted",
+		"quantity": 36_000.0,
+		"revenue": 648_000.0,
+		"lead_time_days": 100_000,
+		"progress_days": 0,
+		"payment_delay_days": 0,
+		"produced": 0.0,
+	}
+
+
 # ------------------------------------------------------------------
 # Lieferkette
 # ------------------------------------------------------------------
@@ -145,6 +160,35 @@ static func _test_production(t: TestFramework) -> void:
 	m.commissioned_year = 1
 	sim.machines["prod-1"] = m
 
+	# Ohne Auftrag steht die Anlage still - und verursacht dann
+	# auch keine variablen Kosten. Das unterscheidet variable
+	# Kosten (laufen mit der Menge) von Fixkosten (laufen immer).
+	sim.inventory_material = 1000.0
+	var cash_untouched := sim.economy.cash
+	sim.production_enabled = true
+	sim._progress_production()
+	t.check_approx("Ohne Auftrag keine Produktion", m.quantity_this_year, 0.0, 0.01)
+	t.check_approx(
+		"Ohne Produktion keine variablen Kosten",
+		sim.economy.cash,
+		cash_untouched,
+		0.01
+	)
+
+	# Produziert wird fuer die Nachfrage: Ohne offenen Auftrag
+	# steht die Anlage still. Ein grosser Auftrag gibt den
+	# Produktionszielen hier den noetigen Bedarf.
+	sim.orders.append({
+		"id": "prod-auftrag",
+		"status": "accepted",
+		"quantity": 10_000.0,
+		"revenue": 50_000.0,
+		"lead_time_days": 2_000,
+		"progress_days": 0,
+		"payment_delay_days": 0,
+		"produced": 0.0,
+	})
+
 	# Ohne Material wird nichts produziert.
 	sim.inventory_material = 0.0
 	sim.production_enabled = true
@@ -154,6 +198,7 @@ static func _test_production(t: TestFramework) -> void:
 	# Mit Material wird produziert und der Bestand sinkt.
 	sim.inventory_material = 1000.0
 	var before_stock: float = sim.inventory_material
+	var cash_before_run: float = sim.economy.cash
 	sim._progress_production()
 	var daily_capacity: float = spec.capacity_units_per_year / 360.0
 	t.check_approx("Tagesproduktion", m.quantity_this_year, daily_capacity, 0.01)
@@ -161,6 +206,14 @@ static func _test_production(t: TestFramework) -> void:
 		"Materialverbrauch gebucht",
 		before_stock - sim.inventory_material,
 		daily_capacity * spec.material_per_unit,
+		0.01
+	)
+	# Jede gefertigte Einheit kostet ihre variablen Kosten - sofort
+	# zahlungswirksam.
+	t.check_approx(
+		"Variable Kosten zahlungswirksam",
+		sim.economy.cash,
+		cash_before_run - daily_capacity * spec.variable_cost_per_unit,
 		0.01
 	)
 
@@ -208,11 +261,21 @@ static func _test_orders(t: TestFramework) -> void:
 	# Kapazitaet 360/360 = 1 Stueck pro Tag -> 100 Tage noetig,
 	# Lieferfrist sind 30 Tage: der Auftrag muss scheitern.
 	# Storniert wird, sobald progress_days die Frist UEBERschreitet -
-	# also beim 31. Verarbeitungstag.
+	# also beim 31. Verarbeitungstag. Produziert wird vorher: nur
+	# tatsaechlich gefertigte Ware kann zugeteilt werden.
 	for _i in range(31):
+		sim._progress_production()
 		sim._process_customer_orders()
 	t.check_true("Auftrag bei Fristablauf storniert", String(order["status"]) == "cancelled")
 	t.check_true("Nicht als erfuellt gewertet", int(sim.stats.get("orders_completed", 0)) == 0)
+	# Die 30 fuer den stornierten Auftrag gefertigten Stuecke liegen
+	# jetzt im Fertigwarenbestand - plus das Stueck vom Stornotag.
+	t.check_approx(
+		"Gefertigte Ware faellt in den Bestand zurueck",
+		sim.finished_goods,
+		31.0,
+		0.01
+	)
 
 	# Ein Auftrag, dessen Menge die Kapazitaet nicht uebersteigt,
 	# wird erfuellt.
@@ -229,13 +292,17 @@ static func _test_orders(t: TestFramework) -> void:
 	sim.orders.append(order2)
 	var days := 0
 	while String(order2["status"]) == "accepted" and days < 60:
+		sim._progress_production()
 		sim._process_customer_orders()
 		days += 1
 	t.check_true("Auftrag bei ausreichender Produktion erfuellt", String(order2["status"]) == "delivered")
 	t.check_approx("Erlos gebucht", sim.economy.revenue_current_year, 100.0, 0.01)
-	# Die Kasse startet bei 50.000 (Startkapital) und waechst um den
-	# sofort bezahlten Erloes.
-	t.check_approx("Kasse erhoeht", sim.economy.cash, 50_100.0, 0.01)
+	# Die Kasse startet bei 50.000 (Startkapital), waechst um den
+	# sofort bezahlten Erloes (100) und sinkt um die variablen
+	# Kosten der 31 tatsaechlich gefertigten Stuecke (31 x 1 EUR).
+	# Der zweite Auftrag wurde komplett aus dem Fertigwarenbestand
+	# des stornierten ersten Auftrags bedient.
+	t.check_approx("Kasse erhoeht", sim.economy.cash, 50_069.0, 0.01)
 
 	# Eigenkapital NICHT doppelt fortgeschrieben
 	t.check_true(
@@ -413,6 +480,10 @@ static func _test_year_close(t: TestFramework) -> void:
 	eco.move_cash(-material_purchase)
 	eco.inventory_value = material_purchase
 	eco.move_cash(-(spec.fixed_operating_costs + spec.labor_cost()))
+	# Die variablen Fertigungskosten sind mit jeder gefertigten
+	# Einheit zahlungswirksam abgeflossen (im echten Lauf bucht das
+	# _produce_one_day). 10.000 Stueck x 26 EUR = 260.000 EUR.
+	eco.move_cash(-(10000.0 * spec.variable_cost_per_unit))
 
 	# Jahresabschluss
 	sim._close_business_year()
@@ -425,6 +496,20 @@ static func _test_year_close(t: TestFramework) -> void:
 	t.check_true(
 		"Materialaufwand in den Gesamtkosten",
 		eco.costs_total >= expected_material
+	)
+
+	# Die variablen Fertigungskosten muessen als Aufwand auf
+	# derselben Basis stehen wie die Zahlung: gefertigte Menge x
+	# variable Stueckkosten.
+	t.check_approx(
+		"Variable Fertigungskosten ausgewiesen",
+		eco.variable_costs_year,
+		10000.0 * spec.variable_cost_per_unit,
+		0.01
+	)
+	t.check_true(
+		"Variable Kosten in den Gesamtkosten",
+		eco.costs_total >= eco.variable_costs_year
 	)
 
 	# Die Fixkosten muessen gebucht sein.
@@ -451,6 +536,7 @@ static func _test_year_close(t: TestFramework) -> void:
 	var restored := EconomyState.new()
 	restored.from_dict(data)
 	t.check_approx("Roundtrip Materialaufwand", restored.material_costs_year, eco.material_costs_year, 0.01)
+	t.check_approx("Roundtrip variable Kosten", restored.variable_costs_year, eco.variable_costs_year, 0.01)
 	t.check_approx("Roundtrip Anlagevermoegen", restored.fixed_assets, eco.fixed_assets, 0.01)
 	t.check_approx("Roundtrip Kasse", restored.cash, eco.cash, 0.01)
 
@@ -585,8 +671,19 @@ static func _test_material(t: TestFramework) -> void:
 	var invalid := sim.buy_material(-100.0)
 	t.check_false("Negative Menge abgelehnt", bool(invalid.get("ok", true)))
 
-	# Jetzt kann die Anlage produzieren.
+	# Jetzt kann die Anlage produzieren - sobald ein Auftrag den
+	# Bedarf liefert.
 	sim.inventory_material = 1000.0
+	sim.orders.append({
+		"id": "mat-auftrag",
+		"status": "accepted",
+		"quantity": 1_000.0,
+		"revenue": 5_000.0,
+		"lead_time_days": 1_000,
+		"progress_days": 0,
+		"payment_delay_days": 0,
+		"produced": 0.0,
+	})
 	sim._progress_production()
 	t.check_true("Produktion laeuft mit Material", m.quantity_this_year > 0.0)
 
@@ -631,11 +728,21 @@ static func _test_full_year(t: TestFramework) -> void:
 	t.check_true("Umsatz erzielt", sim.economy.revenue_total > 0.0)
 	t.check_true("Auftrage erfuellt", int(sim.stats.get("orders_completed", 0)) > 0)
 
-	# Die Kasse muss durch den Umsatz gewachsen sein (die Anlage hat
-	# kein Materialverbrauch, also bleiben die laufenden Kosten gering).
+	# Die Kasse muss durch den Umsatz gewachsen sein: Die Auftraege
+	# sind mit 41,40 EUR je Stueck bepreist, die variablen Kosten
+	# betragen 26 EUR - jede verkaufte Einheit traegt positiv bei.
+	# Produziert wird nur fuer offene Auftraege, also frisst keine
+	# Ueberproduktion den Ueberschuss auf.
 	t.check_true(
 		"Kasse durch Umsatz gewachsen",
 		sim.economy.cash > start_cash
+	)
+
+	# Die variablen Fertigungskosten des letzten Jahres muessen in
+	# der GuV stehen - Produktion ist nicht kostenlos.
+	t.check_true(
+		"Variable Fertigungskosten gebucht",
+		sim.economy.variable_costs_year > 0.0
 	)
 
 	# Die Bilanz muss aufgehen - auch nach zwei Jahresabschluessen.
@@ -781,6 +888,20 @@ static func _test_material_logistics(t: TestFramework) -> void:
 
 	# Der Materialpreis ergibt sich aus der Anlage.
 	t.check_approx("Materialpreis korrekt", sim.material_price(), 2.50, 0.01)
+
+	# Produziert wird fuer die Nachfrage: Ein grosser offener
+	# Auftrag sorgt dafuer, dass die Anlage jeden Tag ihren
+	# Tagesbedarf abruft, sobald Material da ist.
+	sim.orders.append({
+		"id": "matlog-auftrag",
+		"status": "accepted",
+		"quantity": 100_000.0,
+		"revenue": 0.0,
+		"lead_time_days": 100_000,
+		"progress_days": 0,
+		"payment_delay_days": 0,
+		"produced": 0.0,
+	})
 
 	# Der Tagesbedarf: 2 kg/Stueck bei 1.000 Stuecken p.a.
 	t.check_approx(
@@ -981,7 +1102,19 @@ static func _test_material_types(t: TestFramework) -> void:
 	)
 
 	# Jetzt produzieren: die Stahlmaschine laeuft, die Verpackung
-	# steht still, weil ihr Material fehlt.
+	# steht still, weil ihr Material fehlt. Ein grosser offener
+	# Auftrag liefert den Bedarf - produziert wird fuer die
+	# Nachfrage, nicht ins Blaue.
+	sim.orders.append({
+		"id": "typen-auftrag",
+		"status": "accepted",
+		"quantity": 100_000.0,
+		"revenue": 0.0,
+		"lead_time_days": 100_000,
+		"progress_days": 0,
+		"payment_delay_days": 0,
+		"produced": 0.0,
+	})
 	var produced_before := m2.quantity_this_year
 	for _i in range(10):
 		sim.advance_day()
@@ -1170,16 +1303,17 @@ static func _test_contracts(t: TestFramework) -> void:
 static func _test_production_chain(t: TestFramework) -> void:
 	# Die Produktion ist alles-oder-nichts: Eine Anlage laeuft nur,
 	# wenn ihr voller Tagesbedarf an Vorprodukten da ist - sonst
-	# steht sie im Leerlauf (mit Protokollvermerk). Die Mengen hier
-	# sind darauf abgestimmt.
+	# steht sie im Leerlauf (mit Protokollvermerk). Produziert wird
+	# fuer die Nachfrage: Jede Teilsimulation bekommt deshalb einen
+	# grossen offenen Auftrag. Die Mengen sind darauf abgestimmt.
 	#
-	# Vorstufe: 90.000 Halbfertigteile p.a. -> 250 am Tag.
+	# Vorstufe: 90.000 Halbfertigteile p.a. -> 250 am Tag moeglich.
 	var stage1 := _make_spec(&"VORSTUFE", 40_000.0, 8_000.0, 4.0, 21.0, 90_000.0)
 	stage1.output_product = &"halb"
 	# Endstufe: braucht 2 Halbfertigteile je Endprodukt. Bei
 	# 36.000 p.a. (100 am Tag) braucht sie 200 Halbfertigteile am
-	# Tag - die Vorstufe liefert 250, der Rest von 50 bleibt im
-	# Zwischenlager.
+	# Tag - die Vorstufe koennte 250, fertigt aber bedarfsgerecht
+	# nur die 200, die die Endstufe heute abruft.
 	var stage2 := _make_spec(&"ENDSTUFE", 24_000.0, 5_400.0, 3.0, 18.0, 36_000.0)
 	stage2.input_product = &"halb"
 	stage2.input_product_per_unit = 2.0
@@ -1193,6 +1327,7 @@ static func _test_production_chain(t: TestFramework) -> void:
 	only_end.state = MachineInstance.State.ACTIVE
 	only_end.commissioned_year = 1
 	sim.machines["end-1"] = only_end
+	sim.orders.append(_chain_order())
 
 	sim.advance_day()
 	t.check_approx(
@@ -1220,31 +1355,35 @@ static func _test_production_chain(t: TestFramework) -> void:
 	finisher.state = MachineInstance.State.ACTIVE
 	finisher.commissioned_year = 1
 	chain.machines["end-1"] = finisher
+	chain.orders.append(_chain_order())
 
 	chain.advance_day()
 
-	var stage1_daily := stage1.capacity_units_per_year / 360.0
 	var stage2_daily := stage2.capacity_units_per_year / 360.0
 
+	# Die Vorstufe fertigt bedarfsgerecht: Die Endstufe ruft heute
+	# 200 Halbfertigteile ab (100 Endstuecke x 2), also fertigt die
+	# Vorstufe genau 200 - nicht ihre vollen 250. Ueberproduktion
+	# wuerde nur Kapital im Zwischenlager vergraben.
 	t.check_approx(
-		"Vorstufe produziert ihre Tagesmenge",
+		"Vorstufe produziert bedarfsgerecht",
 		producer.quantity_this_year,
-		stage1_daily,
+		stage2_daily * 2.0,
 		0.01
 	)
-	# Die Endstufe braucht 2 Halbfertigteile je Endstueck. Die
-	# Vorstufe liefert am selben Tag 250 Stueck - mehr als die 200,
-	# die die Endstufe braucht. Der Rest bleibt im Zwischenlager.
 	t.check_approx(
 		"Endstufe produziert ihre Tagesmenge",
 		finisher.quantity_this_year,
 		stage2_daily,
 		0.01
 	)
+	# Bedarfsgerechte Fertigung heisst: kein Rueckstau. Das
+	# Zwischenlager bleibt leer, weil die Endstufe am selben Tag
+	# verbraucht, was die Vorstufe liefert.
 	t.check_approx(
-		"Zwischenlager erhaelt den Ueberschuss",
+		"Kein Rueckstau im Zwischenlager",
 		chain.intermediate_stock(&"halb"),
-		stage1_daily - stage2_daily * 2.0,
+		0.0,
 		0.01
 	)
 
@@ -1278,6 +1417,7 @@ static func _test_production_chain(t: TestFramework) -> void:
 	starving_end.state = MachineInstance.State.ACTIVE
 	starving_end.commissioned_year = 1
 	starved.machines["end-1"] = starving_end
+	starved.orders.append(_chain_order())
 
 	# Die Produktion ist alles-oder-nichts: Die Endstufe laeuft nur
 	# an Tagen, an denen ihr voller Tagesbedarf (200) im
