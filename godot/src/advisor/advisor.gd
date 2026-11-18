@@ -734,7 +734,7 @@ func _analyze_financing(sim: SimulationEngine) -> Array:
 			"title": "Kreditrahmen nicht ausgeschöpft",
 			"analysis": (
 				"Die Bank würde %s € gewähren. Das Eigenkapital ist "
-				+ "zu %s % % vom Fremdkapital finanziert – eine niedrige "
+				+ "zu %s %% vom Fremdkapital finanziert – eine niedrige "
 				+ "Fremdkapitalquote ist ein Zeichen gesunder Finanzierung, "
 				+ "aber ungenutztes Kapital kostet Rendite."
 			) % [_format_eur(limit), "%.0f" % (debt_share * 100.0)],

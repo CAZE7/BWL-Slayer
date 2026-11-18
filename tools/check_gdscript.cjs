@@ -133,6 +133,39 @@ for (const file of files) {
     }
   }
 
+  // Ungültige Formatsequenzen in String-Literalen.
+  //
+  // Hintergrund: Ein "% %" statt "%%" in einem Befundtext des
+  // Beraters liess die Formatierung an jedem Simulationstag mit
+  // "unsupported format character" scheitern – still, weil Godot
+  // bei einem Formatfehler nur einen Laufzeitfehler loggt und den
+  // String unformatiert zurueckgibt. GDScript kennt als Platzhalter
+  // %% und %s/%d/%o/%x/%X/%f/%v/%c (mit optionalen Flags/Breite).
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*#/.test(line)) continue;
+    // Nur Inhalte von String-Literalen betrachten.
+    const literals = line.match(/"(?:[^"\\]|\\.)*"/g);
+    if (!literals) continue;
+    for (const lit of literals) {
+      const body = lit.slice(1, -1);
+      // Nur erkennbare Formatstrings pruefen: Ein Literal ohne
+      // gueltigen Platzhalter (etwa das Label "df(10%,2)") wird nie
+      // mit dem %-Operator formatiert und bleibt unbeanstandet.
+      if (!/%[-+0-9.*]*[sdoxXfvc]/.test(body)) continue;
+      const fmt = /%(.)/g;
+      let m;
+      while ((m = fmt.exec(body)) !== null) {
+        const next = m[1];
+        if (next === '%') continue; // literal %%
+        if (/[-+0-9.*]/.test(next)) continue; // Flags/Breite (z. B. %.1f, %02d)
+        if (/[sdoxXfvc]/.test(next)) continue; // gueltige Umwandlung
+        fail(file, i + 1,
+          `Ungültige Formatsequenz "%${next}" im Formatstring – für ein Prozentzeichen "%%" schreiben`);
+      }
+    }
+  }
+
   // Klammern平衡 (ohne Strings/Kommentare)
   const stripped = stripCode(source);
   const balance = { '(': 0, '[': 0, '{': 0 };

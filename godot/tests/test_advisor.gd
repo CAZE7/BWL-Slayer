@@ -99,6 +99,8 @@ static func run(t: TestFramework) -> void:
 	_test_chain_findings(t)
 	t.suite("Berater · Fahrplan mit Zielzahl")
 	_test_next_steps(t)
+	t.suite("Berater · Finanzierungsbefunde")
+	_test_financing_findings(t)
 
 
 # ------------------------------------------------------------------
@@ -379,4 +381,52 @@ static func _test_next_steps(t: TestFramework) -> void:
 	t.check_true(
 		"Bei guter Lage nennt der Fahrplan die Investition",
 		not _find(invest, "next_step_investment").is_empty()
+	)
+
+
+# ------------------------------------------------------------------
+# Finanzierungsbefunde
+#
+# Der Zehn-Jahres-Lauf deckte einen stillen Formatfehler auf: Ein
+# "% %" statt "%%" im Befundtext liess die Formatierung an jedem
+# Simulationstag scheitern - ohne dass ein Test rot wurde, weil der
+# Befund nie inhaltlich geprueft wurde. Diese Tests formatieren
+# beide Finanzierungsbefunde wirklich und stellen sicher, dass alle
+# Platzhalter ersetzt sind.
+# ------------------------------------------------------------------
+static func _test_financing_findings(t: TestFramework) -> void:
+	var advisor := _advisor()
+	if advisor == null:
+		return
+	advisor.reset()
+
+	# Fall 1: Niedrige Verschuldung + freier Kreditrahmen -> der
+	# Hinweis auf ungenutzten Kreditrahmen muss sauber formatiert
+	# sein (hier sass der Fehler).
+	var sim := SimulationEngine.new()
+	var unused: Array = advisor._analyze_financing(sim)
+	var unused_finding := _find(unused, "financing_unused_capacity")
+	t.check_true("Ungenutzter Kreditrahmen wird erkannt", not unused_finding.is_empty())
+	var unused_text := String(unused_finding.get("analysis", ""))
+	t.check_true(
+		"Befundtext vollstaendig formatiert (kein %s uebrig)",
+		not unused_text.contains("%s")
+	)
+	t.check_true(
+		"Befundtext nennt den Kreditrahmen",
+		unused_text.contains("€")
+	)
+
+	# Fall 2: Hohe Verschuldung -> Leverage-Warnung, ebenfalls
+	# vollstaendig formatiert.
+	var sim2 := SimulationEngine.new()
+	sim2.economy.debt = 60_000.0
+	sim2.economy.interest_paid_year = 3_600.0
+	var levered: Array = advisor._analyze_financing(sim2)
+	var leverage_finding := _find(levered, "financing_high_leverage")
+	t.check_true("Hohe Verschuldung wird erkannt", not leverage_finding.is_empty())
+	var leverage_text := String(leverage_finding.get("analysis", ""))
+	t.check_true(
+		"Leverage-Befund vollstaendig formatiert",
+		not leverage_text.contains("%s")
 	)
