@@ -21,6 +21,12 @@ static func run(t: TestFramework) -> void:
 	_test_investment_evaluation(t)
 	t.suite("Simulation · Finanzierung")
 	_test_financing(t)
+	t.suite("Simulation · Tilgungspläne")
+	_test_structured_loans(t)
+	t.suite("Simulation · Dividendenpolitik")
+	_test_dividend_policy(t)
+	t.suite("Simulation · Finanzplan & Aktienbewertung")
+	_test_financial_tools(t)
 
 
 # ------------------------------------------------------------------
@@ -479,3 +485,244 @@ static func _test_financing(t: TestFramework) -> void:
 		900.0 + sim.economy.repayment_year,
 		0.01
 	)
+
+
+# ------------------------------------------------------------------
+# Strukturierte Darlehen: Der Schuldendienst folgt exakt dem
+# Tilgungsplan aus der BWL-Engine. Damit treibt derselbe Stoff, den
+# das Lernsystem lehrt, die Simulation an - und jede Abweichung
+# zwischen Lehre und Spiel waere ein Testfehler.
+# ------------------------------------------------------------------
+static func _test_structured_loans(t: TestFramework) -> void:
+	# --- Annuitaetendarlehen ---------------------------------------
+	var sim := SimulationEngine.new()
+	var result := sim.take_structured_loan(20_000.0, 4, "ANNUITY", 0.08)
+	t.check_true("Annuitaetendarlehen aufgenommen", bool(result.get("ok", false)))
+	t.check_approx("Fremdkapital = Darlehenssumme", sim.economy.debt, 20_000.0, 0.01)
+	t.check_approx("Restschuld der Darlehen", sim.structured_debt(), 20_000.0, 0.01)
+
+	var plan: Dictionary = BWLEngine.amortization_plan(20_000.0, 0.08, 4, "ANNUITY")
+	var rows: Array = plan["rows"]
+
+	# Jahr 1: Zins auf die volle Restschuld, Tilgung = Annuitaet - Zins.
+	sim._close_business_year()
+	var row1: Dictionary = rows[0]
+	t.check_approx(
+		"Jahr 1: Zins nach Plan",
+		sim.economy.interest_paid_year,
+		float(row1["interest"]),
+		0.01
+	)
+	t.check_approx(
+		"Jahr 1: Tilgung nach Plan",
+		sim.economy.repayment_year,
+		float(row1["redemption"]),
+		0.01
+	)
+	t.check_approx(
+		"Jahr 1: Restschuld nach Plan",
+		sim.economy.debt,
+		float(row1["rest_end"]),
+		0.01
+	)
+	t.check_approx("Bilanz stimmt nach Schuldendienst", sim.economy.balance_check(), 0.0, 1.0)
+
+	# Jahr 2: Der Zinsanteil sinkt, der Tilgungsanteil steigt.
+	sim._close_business_year()
+	var row2: Dictionary = rows[1]
+	t.check_approx(
+		"Jahr 2: Zins sinkt nach Plan",
+		sim.economy.interest_paid_year,
+		float(row2["interest"]),
+		0.01
+	)
+	t.check_approx(
+		"Jahr 2: Restschuld nach Plan",
+		sim.economy.debt,
+		float(row2["rest_end"]),
+		0.01
+	)
+	t.check_true(
+		"Tilgungsanteil steigt von Jahr zu Jahr",
+		float(row2["redemption"]) > float(row1["redemption"])
+	)
+
+	# Nach der vollen Laufzeit ist das Darlehen getilgt und verschwindet.
+	sim._close_business_year()
+	sim._close_business_year()
+	t.check_approx("Nach Laufzeitende schuldenfrei", sim.economy.debt, 0.0, 0.05)
+	t.check_true("Darlehen aus der Liste entfernt", sim.loans.is_empty())
+
+	# --- Ratendarlehen: konstante Tilgung --------------------------
+	var sim2 := SimulationEngine.new()
+	sim2.take_structured_loan(12_000.0, 3, "REDEMPTION", 0.05)
+	sim2._close_business_year()
+	t.check_approx("Ratendarlehen: Tilgung Jahr 1", sim2.economy.repayment_year, 4_000.0, 0.01)
+	t.check_approx("Ratendarlehen: Zins Jahr 1", sim2.economy.interest_paid_year, 600.0, 0.01)
+	sim2._close_business_year()
+	t.check_approx("Ratendarlehen: Tilgung Jahr 2 konstant", sim2.economy.repayment_year, 4_000.0, 0.01)
+	t.check_approx("Ratendarlehen: Zins Jahr 2 sinkt", sim2.economy.interest_paid_year, 400.0, 0.01)
+
+	# --- Endfaelliges Darlehen: Tilgung erst am Ende ----------------
+	var sim3 := SimulationEngine.new()
+	sim3.take_structured_loan(10_000.0, 2, "FEST", 0.06)
+	sim3._close_business_year()
+	t.check_approx("Endfaellig: keine Tilgung im Jahr 1", sim3.economy.repayment_year, 0.0, 0.01)
+	t.check_approx("Endfaellig: Zins Jahr 1", sim3.economy.interest_paid_year, 600.0, 0.01)
+	t.check_approx("Endfaellig: Restschuld unveraendert", sim3.economy.debt, 10_000.0, 0.01)
+	sim3._close_business_year()
+	t.check_approx("Endfaellig: volle Tilgung am Ende", sim3.economy.repayment_year, 10_000.0, 0.01)
+	t.check_true("Endfaellig: Darlehen abgeschlossen", sim3.loans.is_empty())
+
+	# --- Validierung und Persistenz --------------------------------
+	var invalid_kind := sim3.take_structured_loan(5_000.0, 3, "BALLON")
+	t.check_true("Unbekannte Darlehensform abgelehnt", not bool(invalid_kind.get("ok", false)))
+	var invalid_years := sim3.take_structured_loan(5_000.0, 0, "ANNUITY")
+	t.check_true("Laufzeit unter 1 Jahr abgelehnt", not bool(invalid_years.get("ok", false)))
+
+	var sim4 := SimulationEngine.new()
+	sim4.take_structured_loan(8_000.0, 5, "REDEMPTION", 0.07)
+	var loaded_sim := SimulationEngine.new()
+	loaded_sim.from_dict(sim4.to_dict())
+	t.check_approx(
+		"Darlehen ueberlebt den Spielstand",
+		loaded_sim.structured_debt(),
+		8_000.0,
+		0.01
+	)
+	t.check_true("Darlehensliste wiederhergestellt", loaded_sim.loans.size() == 1)
+
+
+# ------------------------------------------------------------------
+# Dividendenpolitik: Die Ausschuettungsquote bestimmt, welcher Teil
+# des Jahresueberschusses an die Eigentuemer fliesst. Der Rest bleibt
+# als Selbstfinanzierung im Unternehmen. Verlustjahre schuetten
+# nichts aus.
+# ------------------------------------------------------------------
+static func _test_dividend_policy(t: TestFramework) -> void:
+	var sim := SimulationEngine.new()
+
+	# Quote setzen und validieren.
+	var ok := sim.set_dividend_policy(0.4)
+	t.check_true("Ausschuettungsquote gesetzt", bool(ok.get("ok", false)))
+	var rejected_ratio := sim.set_dividend_policy(1.5)
+	t.check_true("Quote ueber 100 % abgelehnt", not bool(rejected_ratio.get("ok", false)))
+	t.check_approx("Quote unveraendert nach Ablehnung", sim.economy.dividend_policy_ratio, 0.4, 0.0001)
+
+	# Ein Gewinnjahr: 10.000 Ueberschuss -> 4.000 Dividende.
+	sim.economy.cash += 10_000.0
+	sim.economy.revenue_current_year += 10_000.0
+	sim.economy.revenue_total += 10_000.0
+	var equity_before := sim.economy.equity
+	sim._close_business_year()
+	t.check_approx("Dividende = Quote x Ueberschuss", sim.economy.dividends_paid, 4_000.0, 0.01)
+	t.check_approx(
+		"Eigenkapital: Gewinn minus Ausschuettung",
+		sim.economy.equity,
+		equity_before + 10_000.0 - 4_000.0,
+		0.01
+	)
+	t.check_approx("Bilanz stimmt nach Dividende", sim.economy.balance_check(), 0.0, 1.0)
+
+	# Ein Verlustjahr schuettet nichts aus.
+	var sim2 := SimulationEngine.new()
+	sim2.set_dividend_policy(0.5)
+	sim2.economy.costs_current_year += 2_000.0
+	sim2.economy.costs_total += 2_000.0
+	sim2._close_business_year()
+	t.check_approx("Verlustjahr: keine Dividende", sim2.economy.dividends_paid, 0.0, 0.01)
+
+	# Die Politik ueberlebt den Spielstand.
+	var restored_eco := EconomyState.new()
+	restored_eco.from_dict(sim.economy.to_dict())
+	t.check_approx("Quote im Spielstand", restored_eco.dividend_policy_ratio, 0.4, 0.0001)
+
+
+# ------------------------------------------------------------------
+# Finanzplan, Aktienbewertung und Lohmann-Ruchti-Ausblick: Die
+# Werkzeuge rechnen mit denselben Engine-Funktionen, die das
+# Lernsystem lehrt.
+# ------------------------------------------------------------------
+static func _test_financial_tools(t: TestFramework) -> void:
+	# --- Finanzplan -------------------------------------------------
+	var spec := _make_spec(&"FINPLAN", 16_000.0, 1_200.0, 2.0, 10.0)
+	var sim := SimulationEngine.new()
+	sim.specs[spec.id] = spec
+	var m := MachineInstance.new(spec, "finplan-1")
+	m.state = MachineInstance.State.ACTIVE
+	m.commissioned_year = 1
+	sim.machines["finplan-1"] = m
+
+	var plan := sim.financial_plan()
+	# Tageskosten: Fixkosten 1.200/360 + variable 2 EUR x Tageskapazitaet.
+	var expected_daily := 1_200.0 / 360.0 + 2.0 * spec.capacity_units_per_year / 360.0
+	t.check_approx("Finanzplan: Tageskosten", float(plan["daily_cost"]), expected_daily, 0.01)
+	# Kapitalbindung: 5 Tage Lager + 1 Tag Produktion + 30 Tage Ziel.
+	var wc: Dictionary = plan["working_capital"]
+	t.check_approx("Finanzplan: Kapitalbindungsdauer", float(wc["days"]), 36.0, 0.01)
+	t.check_approx(
+		"Finanzplan: Kapitalbedarf = Dauer x Tageskosten",
+		float(wc["need"]),
+		36.0 * expected_daily,
+		0.5
+	)
+	t.check_true(
+		"Finanzplan: Fixkosten als Auszahlung",
+		float(plan["expected_outflow"]) >= 1_200.0
+	)
+
+	# Mit Darlehen erscheint der Schuldendienst im Plan.
+	sim.take_structured_loan(9_000.0, 3, "REDEMPTION", 0.06)
+	var plan2 := sim.financial_plan()
+	t.check_approx("Finanzplan: Darlehenszins", float(plan2["loan_interest"]), 540.0, 0.01)
+	t.check_approx("Finanzplan: Darlehenstilgung", float(plan2["loan_principal"]), 3_000.0, 0.01)
+
+	# --- Aktienbewertung ---------------------------------------------
+	var sim2 := SimulationEngine.new()
+	sim2.set_dividend_policy(0.5)
+	# Zuletzt festgestelltes Ergebnis: 5.000 EUR (extern, keine kalk. Zinsen).
+	sim2.economy.profit_current_year = 5_000.0
+	sim2.economy.imputed_interest_year = 0.0
+	var value := sim2.share_valuation(0.025, 1.1, 0.08)
+	t.check_approx("Bewertung: Ergebnis je Aktie", float(value["eps"]), 5.0, 0.0001)
+	t.check_approx("Bewertung: Buchwert je Aktie", float(value["book_value_per_share"]), 50.0, 0.0001)
+	t.check_approx("Bewertung: Dividende je Aktie", float(value["dividend_per_share"]), 2.5, 0.0001)
+	# g = Thesaurierung 0,5 x EK-Rendite 10 % = 5 %.
+	t.check_approx("Bewertung: nachhaltiges Wachstum", float(value["growth"]), 0.05, 0.0001)
+	# r = 2,5 % + 1,1 x 5,5 % = 8,55 %.
+	t.check_approx("Bewertung: CAPM-Kapitalkosten", float(value["cost_of_equity"]), 0.0855, 0.0001)
+	# Gordon: D1 / (r - g) = 2,625 / 0,0355.
+	t.check_approx(
+		"Bewertung: Gordon-Wert",
+		float(value["gordon_value"]),
+		2.625 / 0.0355,
+		0.01
+	)
+
+	# --- Lohmann-Ruchti-Ausblick -------------------------------------
+	var sim3 := SimulationEngine.new()
+	sim3.specs[spec.id] = spec
+	for i in range(3):
+		var lm := MachineInstance.new(spec, "lr-%d" % i)
+		lm.state = MachineInstance.State.ACTIVE
+		lm.commissioned_year = 1
+		sim3.machines["lr-%d" % i] = lm
+	var outlook := sim3.lohmann_ruchti_outlook(7)
+	t.check_true("Lohmann-Ruchti: Ausblick vorhanden", bool(outlook.get("ok", false)))
+	t.check_true("Lohmann-Ruchti: Anlagenzahl erkannt", int(outlook.get("machines", 0)) == 3)
+	var engine_rows: Array = BWLEngine.lohmann_ruchti(
+		3, spec.acquisition_cost, spec.useful_life_years, 7
+	)
+	var outlook_rows: Array = outlook["rows"]
+	t.check_true("Lohmann-Ruchti: 7 Jahreszeilen", outlook_rows.size() == 7)
+	t.check_approx(
+		"Lohmann-Ruchti: AfA-Parität mit der Engine",
+		float(outlook_rows[0]["depreciation"]),
+		float(engine_rows[0]["depreciation"]),
+		0.01
+	)
+
+	# Ohne aktive Anlage gibt es keinen Ausblick.
+	var empty := SimulationEngine.new()
+	var none := empty.lohmann_ruchti_outlook(5)
+	t.check_true("Lohmann-Ruchti: ohne Anlagen abgelehnt", not bool(none.get("ok", false)))

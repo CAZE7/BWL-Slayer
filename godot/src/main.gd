@@ -1342,6 +1342,162 @@ func _fill_finance(box: VBoxContainer) -> void:
 	else:
 		box.add_child(_muted("Kein Kreditrahmen. Die Bank gewaehrt kein weiteres Fremdkapital."))
 
+	# --- Darlehen mit Tilgungsplan --------------------------------
+	_add_section(box, "DARLEHEN MIT TILGUNGSPLAN")
+
+	if Simulation.loans.is_empty():
+		box.add_child(_muted(
+			"Kein Darlehen. Annuität: konstante Rate. Raten: konstante "
+			+ "Tilgung. Endfällig: Tilgung komplett am Laufzeitende."
+		))
+	else:
+		for loan_entry in Simulation.loans:
+			var due: Dictionary = Simulation.loan_service_due(loan_entry)
+			var loan_box := VBoxContainer.new()
+			loan_box.add_theme_constant_override("separation", 1)
+			var loan_head := Label.new()
+			loan_head.text = "%s · Restschuld %s" % [
+				Simulation.loan_label(String(loan_entry.get("kind", ""))),
+				BWLEngine.format_eur(float(loan_entry.get("remaining", 0.0)), 0),
+			]
+			loan_head.add_theme_font_size_override("font_size", 12)
+			loan_box.add_child(loan_head)
+			var loan_detail := Label.new()
+			loan_detail.text = "%s %% Zins · nächstes Jahr: %s Zins + %s Tilgung" % [
+				"%.1f" % (float(loan_entry.get("rate", 0.0)) * 100.0),
+				BWLEngine.format_eur(float(due["interest"]), 0),
+				BWLEngine.format_eur(float(due["principal"]), 0),
+			]
+			loan_detail.add_theme_font_size_override("font_size", 11)
+			loan_detail.add_theme_color_override("font_color", UI["text_muted"])
+			loan_box.add_child(loan_detail)
+			box.add_child(loan_box)
+
+	var structured_amount := minf(20_000.0, Simulation.credit_limit())
+	if structured_amount >= 1_000.0:
+		var kinds := [
+			["ANNUITY", "Annuitätendarlehen"],
+			["REDEMPTION", "Ratendarlehen"],
+			["FEST", "endfälliges Darlehen"],
+		]
+		for kind_pair in kinds:
+			var kind_code: String = kind_pair[0]
+			var loan_btn := Button.new()
+			loan_btn.text = "%s: %s, 4 Jahre" % [
+				kind_pair[1], BWLEngine.format_eur(structured_amount, 0)
+			]
+			loan_btn.custom_minimum_size = Vector2(0, 30)
+			loan_btn.pressed.connect(func():
+				var result := Simulation.take_structured_loan(structured_amount, 4, kind_code)
+				if not bool(result.get("ok", false)):
+					EventBus.notify(
+						"Darlehen abgelehnt",
+						String(result.get("error", "Die Bank lehnt ab.")),
+						"warning"
+					)
+				_refresh_sidebar()
+			)
+			box.add_child(loan_btn)
+
+	# --- Dividendenpolitik ----------------------------------------
+	_add_section(box, "DIVIDENDENPOLITIK")
+	box.add_child(_muted(
+		"Anteil des Jahresüberschusses, der ausgeschüttet wird. Der "
+		+ "Rest bleibt als Selbstfinanzierung im Unternehmen."
+	))
+
+	var div_row := HBoxContainer.new()
+	div_row.add_theme_constant_override("separation", 6)
+	var div_label := Label.new()
+	div_label.text = "Ausschüttung"
+	div_label.custom_minimum_size = Vector2(110, 0)
+	div_label.add_theme_font_size_override("font_size", 12)
+	div_row.add_child(div_label)
+
+	var div_slider := HSlider.new()
+	div_slider.min_value = 0.0
+	div_slider.max_value = 100.0
+	div_slider.step = 5.0
+	div_slider.value = eco.dividend_policy_ratio * 100.0
+	div_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	div_slider.custom_minimum_size = Vector2(0, 24)
+	div_slider.tooltip_text = "Ausschüttungsquote: Anteil des Gewinns, der als Dividende abfließt."
+	div_row.add_child(div_slider)
+
+	var div_value := Label.new()
+	div_value.text = "%d %%" % int(eco.dividend_policy_ratio * 100.0)
+	div_value.custom_minimum_size = Vector2(48, 0)
+	div_value.add_theme_font_size_override("font_size", 12)
+	div_value.add_theme_color_override("font_color", UI["accent"])
+	div_row.add_child(div_value)
+
+	div_slider.value_changed.connect(func(value: float):
+		div_value.text = "%d %%" % int(value)
+	)
+	div_slider.drag_ended.connect(func(changed: bool):
+		if changed:
+			Simulation.set_dividend_policy(div_slider.value / 100.0)
+			_refresh_sidebar()
+	)
+	box.add_child(div_row)
+	_add_metric(box, "Ausgeschüttet (kumuliert)", BWLEngine.format_eur(eco.dividends_paid, 0))
+
+	# --- Finanzplan: Kapitalbedarf und Zahlungsstroeme -------------
+	_add_section(box, "FINANZPLAN (NÄCHSTES JAHR)")
+	var finplan: Dictionary = Simulation.financial_plan()
+	var wc_plan: Dictionary = finplan["working_capital"]
+	_add_metric(box, "Kapitalbindungsdauer", "%d Tage" % int(float(wc_plan["days"])))
+	_add_metric(box, "Kapitalbedarf Umlaufvermögen", BWLEngine.format_eur(float(wc_plan["need"]), 0))
+	_add_metric(box, "Erwartete Einzahlungen", BWLEngine.format_eur(float(finplan["expected_inflow"]), 0))
+	_add_metric(box, "Geplante Auszahlungen", BWLEngine.format_eur(float(finplan["expected_outflow"]), 0))
+	var net_plan := float(finplan["net_plan"])
+	var net_label := Label.new()
+	net_label.text = "Plansaldo: %s" % BWLEngine.format_eur(net_plan, 0)
+	net_label.add_theme_font_size_override("font_size", 12)
+	net_label.add_theme_color_override(
+		"font_color", UI["positive"] if net_plan >= 0.0 else UI["danger"]
+	)
+	box.add_child(net_label)
+
+	# --- Aktienbewertung: das eigene Unternehmen als AG -------------
+	_add_section(box, "AKTIENBEWERTUNG (1.000 AKTIEN)")
+	var valuation: Dictionary = Simulation.share_valuation()
+	_add_metric(box, "Ergebnis je Aktie", BWLEngine.format_eur(float(valuation["eps"]), 2))
+	_add_metric(box, "Buchwert je Aktie", BWLEngine.format_eur(float(valuation["book_value_per_share"]), 2))
+	_add_metric(box, "Dividende je Aktie", BWLEngine.format_eur(float(valuation["dividend_per_share"]), 2))
+	_add_metric(box, "EK-Kosten (CAPM)", BWLEngine.format_pct(float(valuation["cost_of_equity"]) * 100.0, 2))
+	_add_metric(box, "Wachstum (nachhaltig)", BWLEngine.format_pct(float(valuation["growth"]) * 100.0, 2))
+	if valuation["gordon_value"] != null:
+		_add_metric(box, "Kurs nach Gordon", BWLEngine.format_eur(float(valuation["gordon_value"]), 2))
+	else:
+		box.add_child(_muted(
+			"Kein Gordon-Kurs: Ohne Dividende (oder bei g ≥ r) liefert "
+			+ "das Modell keinen Wert. Buchwert und EPS bleiben die Anker."
+		))
+
+	# --- Lohmann-Ruchti: Innenfinanzierung --------------------------
+	_add_section(box, "KAPAZITÄTSERWEITERUNG (LOHMANN-RUCHTI)")
+	var outlook: Dictionary = Simulation.lohmann_ruchti_outlook(3)
+	if bool(outlook.get("ok", false)):
+		box.add_child(_muted(
+			"Abschreibungsgegenwerte fließen als Umsatz zurück und "
+			+ "können neue Anlagen finanzieren, bevor die alten ausscheiden."
+		))
+		var outlook_rows: Array = outlook["rows"]
+		for row_entry in outlook_rows:
+			var row_label := Label.new()
+			row_label.text = "Jahr %d: %d Anlagen · AfA %s · finanzierbar: %d neue" % [
+				int(row_entry["year"]),
+				int(row_entry["active_machines"]),
+				BWLEngine.format_eur(float(row_entry["depreciation"]), 0),
+				int(row_entry["bought"]),
+			]
+			row_label.add_theme_font_size_override("font_size", 11)
+			row_label.add_theme_color_override("font_color", UI["text_muted"])
+			box.add_child(row_label)
+	else:
+		box.add_child(_muted("Keine aktive Anlage – ohne Anlagenpark kein Erweiterungseffekt."))
+
 	# --- Rahmenvertraege: planbare Nachfrage ----------------------
 	_add_section(box, "RAHMENVERTRÄGE")
 

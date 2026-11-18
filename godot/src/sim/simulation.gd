@@ -84,6 +84,19 @@ var intermediate_inventory: Dictionary = {}
 ## erfasst – das ist das Vorsichtsprinzip in seiner strengsten Form
 ## und haelt die Bilanzlogik des Spiels einfach.
 var finished_goods: float = 0.0
+
+## Strukturierte Darlehen mit Tilgungsplan.
+##
+## Jeder Eintrag: {id, kind, principal, rate, years, years_elapsed,
+## remaining}. `kind` ist ANNUITY (Annuitaetendarlehen, konstante
+## Jahresrate), REDEMPTION (Ratendarlehen, konstante Tilgung) oder
+## FEST (endfaellig, Tilgung komplett am Ende). Der Schuldendienst
+## wird beim Jahresabschluss nach Plan gebucht. Fremdkapital, das
+## NICHT aus strukturierten Darlehen stammt, folgt weiter der
+## pauschalen Tilgungsregel (repayment_share).
+var loans: Array = []
+## Fortlaufende Nummer fuer eindeutige Darlehens-IDs.
+var loan_sequence: int = 0
 var day_accumulator: float = 0.0
 
 ## Produktionseinstellungen (vom Spieler steuerbar)
@@ -187,6 +200,8 @@ func reset() -> void:
 	material_inventory.clear()
 	intermediate_inventory.clear()
 	finished_goods = 0.0
+	loans.clear()
+	loan_sequence = 0
 	economy = EconomyState.new()
 	stats = {
 		"days_simulated": 0,
@@ -1482,7 +1497,14 @@ func _close_business_year() -> void:
 			new_imputed += instance.current_imputed_interest()
 	economy.depreciation_year = new_depreciation
 	economy.imputed_interest_year = new_imputed
-	economy.interest_paid_year = economy.debt * economy.debt_rate
+	# Zinsaufwand: strukturierte Darlehen tragen ihren eigenen
+	# Vertragszins auf die Restschuld; nur das uebrige (pauschale)
+	# Fremdkapital laeuft zum allgemeinen Kontokorrentsatz.
+	var structured_interest := 0.0
+	for loan in loans:
+		structured_interest += float(loan_service_due(loan)["interest"])
+	var unstructured_debt := maxf(0.0, economy.debt - structured_debt())
+	economy.interest_paid_year = unstructured_debt * economy.debt_rate + structured_interest
 
 	# Zahlungswirksame Fixkosten: Personal, Wartung, Verwaltung
 	var fixed := 0.0
@@ -1561,12 +1583,54 @@ func _close_business_year() -> void:
 	# hergibt. Wer nicht tilgt, behaelt Liquiditaet, zahlt aber mehr
 	# Zinsen.
 	var repayment: float = 0.0
-	if economy.debt > 0.0 and economy.auto_repayment:
-		var planned: float = economy.debt * clampf(economy.repayment_share, 0.0, 1.0)
+	# Die pauschale Tilgungsregel gilt NUR fuer Fremdkapital ohne
+	# Tilgungsplan – strukturierte Darlehen folgen ihrem Plan und
+	# duerfen nicht doppelt getilgt werden.
+	var flat_debt := maxf(0.0, economy.debt - structured_debt())
+	if flat_debt > 0.0 and economy.auto_repayment:
+		var planned: float = flat_debt * clampf(economy.repayment_share, 0.0, 1.0)
 		repayment = minf(planned, maxf(0.0, economy.cash))
 		if repayment > 0.0:
 			economy.move_cash(-repayment)
 			economy.debt = maxf(0.0, economy.debt - repayment)
+
+	# Schuldendienst der strukturierten Darlehen: Tilgung nach Plan.
+	# Der Zins wurde oben bereits im Zinsaufwand erfasst und wird
+	# weiter unten mit der Kasse verrechnet. Reicht die Kasse fuer
+	# die planmaessige Tilgung nicht, bleibt der Rest als Schuld
+	# stehen und kostet naechstes Jahr weiter Zinsen.
+	var settled: Array = []
+	for loan in loans:
+		var due := loan_service_due(loan)
+		var principal_due := float(due["principal"])
+		var paid := minf(principal_due, maxf(0.0, economy.cash))
+		if paid > 0.0:
+			economy.move_cash(-paid)
+			economy.debt = maxf(0.0, economy.debt - paid)
+			loan["remaining"] = maxf(0.0, float(loan["remaining"]) - paid)
+			repayment += paid
+		if paid < principal_due - 0.005:
+			EventBus.notify(
+				"Tilgung nicht gedeckt",
+				"Fuer %s fehlte die Liquiditaet: %s € Tilgung blieben offen." % [
+					loan_label(String(loan.get("kind", ""))),
+					_format_int(principal_due - paid),
+				],
+				"warning"
+			)
+		loan["years_elapsed"] = int(loan.get("years_elapsed", 0)) + 1
+		if float(loan["remaining"]) <= 0.005:
+			settled.append(loan)
+	for loan in settled:
+		loans.erase(loan)
+		EventBus.notify(
+			"Darlehen getilgt",
+			"%s ueber %s € ist vollstaendig zurueckgezahlt." % [
+				loan_label(String(loan.get("kind", ""))),
+				_format_int(float(loan.get("principal", 0.0))),
+			],
+			"success"
+		)
 	economy.repayment_year = repayment
 
 	# Jahr abschließen: Gewinn und Kasse.
@@ -1594,6 +1658,33 @@ func _close_business_year() -> void:
 	#
 	# Die Tilgung wurde oben bereits direkt gebucht (Fremdkapital
 	# sinkt, Kasse sinkt) und darf nicht noch einmal erfasst werden.
+	# Dividendenpolitik: Bei gesetzter Ausschuettungsquote wird der
+	# entsprechende Anteil des Jahresueberschusses automatisch als
+	# Dividende beschlossen. Nur ein positives Ergebnis wird
+	# ausgeschuettet, und nur soweit die Kasse es nach der
+	# Zinszahlung hergibt. Was nicht ausgeschuettet wird, bleibt
+	# als Selbstfinanzierung im Unternehmen.
+	if economy.dividend_policy_ratio > 0.0:
+		var distributable := maxf(0.0, economy.external_result())
+		var planned_dividend := (
+			distributable
+			* clampf(economy.dividend_policy_ratio, 0.0, 1.0)
+		)
+		planned_dividend = minf(
+			planned_dividend,
+			maxf(0.0, economy.cash - economy.interest_paid_year)
+		)
+		if planned_dividend > 0.0:
+			economy.dividend_current_year += planned_dividend
+			EventBus.notify(
+				"Dividende beschlossen",
+				"%s € Ausschuettung (%s %% des Jahresueberschusses)." % [
+					_format_int(planned_dividend),
+					"%.0f" % (economy.dividend_policy_ratio * 100.0),
+				],
+				"info"
+			)
+
 	economy.profit_current_year = economy.operating_result()
 	economy.move_cash(-economy.interest_paid_year)
 	economy.move_cash(-economy.dividend_current_year)
@@ -1796,6 +1887,111 @@ func take_loan(amount: float, rate: float = -1.0) -> Dictionary:
 	return {"ok": true, "amount": amount, "rate": economy.debt_rate}
 
 
+## Nimmt ein strukturiertes Darlehen mit Tilgungsplan auf.
+##
+## `kind`:
+##   ANNUITY    – Annuitaetendarlehen: konstante Jahresrate, der
+##                Zinsanteil sinkt, der Tilgungsanteil steigt.
+##   REDEMPTION – Ratendarlehen: konstante Tilgung, die Jahresrate
+##                sinkt von Jahr zu Jahr.
+##   FEST       – endfaelliges Darlehen: waehrend der Laufzeit nur
+##                Zinsen, die Tilgung kommt komplett am Ende.
+##
+## Der Zinssatz richtet sich nach der Bonitaet (Fremdkapitalquote),
+## kann fuer Lehrbuchaufgaben aber explizit vorgegeben werden. Der
+## Schuldendienst wird beim Jahresabschluss automatisch nach Plan
+## gebucht. Das Kreditlimit der Bank gilt wie bei jedem Kredit.
+func take_structured_loan(
+	amount: float, years: int, kind: String = "ANNUITY", rate: float = -1.0
+) -> Dictionary:
+	if amount <= 0.0:
+		return {"ok": false, "error": "Kreditbetrag muss positiv sein."}
+	if years < 1:
+		return {"ok": false, "error": "Die Laufzeit muss mindestens 1 Jahr betragen."}
+	if kind != "ANNUITY" and kind != "REDEMPTION" and kind != "FEST":
+		return {"ok": false, "error": "Unbekannte Darlehensform: %s" % kind}
+
+	var limit := credit_limit()
+	if amount > limit:
+		return {
+			"ok": false,
+			"error": "Die Bank gewaehrt hoechstens %s €." % _format_int(limit),
+		}
+
+	var loan_rate := rate if rate >= 0.0 else _interest_rate_for(debt_ratio())
+	loan_sequence += 1
+	var loan := {
+		"id": "loan-%d" % loan_sequence,
+		"kind": kind,
+		"principal": amount,
+		"rate": loan_rate,
+		"years": years,
+		"years_elapsed": 0,
+		"remaining": amount,
+	}
+	loans.append(loan)
+	economy.move_cash(amount)
+	economy.debt += amount
+	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Darlehen aufgenommen",
+		"%s € (%s, %d Jahre) zu %s %% Zins." % [
+			_format_int(amount), loan_label(kind), years,
+			"%.1f" % (loan_rate * 100.0),
+		],
+		"info"
+	)
+	return {
+		"ok": true,
+		"id": String(loan["id"]),
+		"rate": loan_rate,
+		"plan": BWLEngine.amortization_plan(amount, loan_rate, years, kind),
+	}
+
+
+## Deutsche Bezeichnung einer Darlehensform.
+static func loan_label(kind: String) -> String:
+	match kind:
+		"ANNUITY":
+			return "Annuitätendarlehen"
+		"REDEMPTION":
+			return "Ratendarlehen"
+		"FEST":
+			return "endfälliges Darlehen"
+	return kind
+
+
+## Restschuld aller strukturierten Darlehen zusammen.
+func structured_debt() -> float:
+	var total := 0.0
+	for loan in loans:
+		total += float(loan.get("remaining", 0.0))
+	return total
+
+
+## Der Schuldendienst eines Darlehens fuer das LAUFENDE Jahr.
+##
+## Rueckgabe: {interest, principal}. Die Zahlen folgen exakt dem
+## Tilgungsplan aus BWLEngine.amortization_plan – derselbe Stoff,
+## den das Lernsystem lehrt, treibt hier die Simulation.
+func loan_service_due(loan: Dictionary) -> Dictionary:
+	var remaining := float(loan.get("remaining", 0.0))
+	var loan_rate := float(loan.get("rate", 0.0))
+	var years := int(loan.get("years", 1))
+	var elapsed := int(loan.get("years_elapsed", 0))
+	var interest := remaining * loan_rate
+	var principal_due := 0.0
+	match String(loan.get("kind", "ANNUITY")):
+		"ANNUITY":
+			var annuity := float(loan.get("principal", 0.0)) * BWLEngine.anf(loan_rate, years)
+			principal_due = minf(remaining, maxf(0.0, annuity - interest))
+		"REDEMPTION":
+			principal_due = minf(remaining, float(loan.get("principal", 0.0)) / float(years))
+		"FEST":
+			principal_due = remaining if elapsed >= years - 1 else 0.0
+	return {"interest": interest, "principal": principal_due}
+
+
 ## Der Kreditbetrag, den die Bank gewaehrt.
 ##
 ## Grundlage ist das Eigenkapital. Hoeher verschuldete Unternehmen
@@ -1830,6 +2026,20 @@ func set_repayment_share(share: float) -> Dictionary:
 	economy.repayment_share = share
 	EventBus.economy_changed.emit(economy.to_dict())
 	return {"ok": true, "share": share}
+
+
+## Setzt die Ausschuettungsquote der Dividendenpolitik.
+##
+## 0 = Vollthesaurierung: der gesamte Gewinn bleibt im Unternehmen
+## (Selbstfinanzierung). 1 = Vollausschuettung. Die Dividende wird
+## beim Jahresabschluss automatisch aus dem Jahresueberschuss
+## beschlossen; Verlustjahre schuetten nichts aus.
+func set_dividend_policy(ratio: float) -> Dictionary:
+	if ratio < 0.0 or ratio > 1.0:
+		return {"ok": false, "error": "Die Ausschuettungsquote muss zwischen 0 und 100 % liegen."}
+	economy.dividend_policy_ratio = ratio
+	EventBus.economy_changed.emit(economy.to_dict())
+	return {"ok": true, "ratio": ratio}
 
 
 ## Die Eigenkapitalquote (Anteil des EK an der Gesamtkapitalstruktur).
@@ -1876,6 +2086,187 @@ func repay_loan(amount: float) -> Dictionary:
 # ==================================================================
 # Abfragen
 # ==================================================================
+
+
+## Finanzplan: Kapitalbedarf und Zahlungsstroeme des kommenden Jahres.
+##
+## Drei Bausteine, alle deterministisch aus dem Ist-Zustand:
+##  1. Kapitalbedarf des Umlaufvermoegens: Kapitalbindungsdauer
+##     (Materiallager + Produktion + Zahlungsziel) mal
+##     zahlungswirksame Tageskosten bei Planauslastung – das
+##     Lehrbuchverfahren aus BWLEngine.working_capital_need.
+##  2. Schuldendienst: Zinsen und planmaessige Tilgung aller
+##     Darlehen im kommenden Jahr.
+##  3. Erwartete Einzahlungen: offene Auftraege (Restmenge),
+##     Rahmenvertraege und ausstehende Forderungen.
+func financial_plan() -> Dictionary:
+	# 1. Kapitalbedarf des Umlaufvermoegens.
+	var daily_cost := 0.0
+	for m in active_machines():
+		var cap_daily := m.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+		daily_cost += m.spec.cash_fixed_costs() / float(DAYS_PER_YEAR)
+		daily_cost += m.spec.variable_cost_per_unit * cap_daily
+		daily_cost += m.spec.material_per_unit * m.spec.material_price_per_kg * cap_daily
+	var phases := [
+		{"name": "Materiallager", "days": float(MATERIAL_LEAD_TIME_DAYS)},
+		{"name": "Produktion", "days": 1.0},
+		{"name": "Zahlungsziel der Kunden", "days": 30.0},
+	]
+	var working_capital := BWLEngine.working_capital_need(phases, 0.0, daily_cost)
+
+	# 2. Schuldendienst des kommenden Jahres.
+	var flat_debt := maxf(0.0, economy.debt - structured_debt())
+	var flat_interest := flat_debt * economy.debt_rate
+	var flat_repayment := 0.0
+	if economy.auto_repayment:
+		flat_repayment = flat_debt * clampf(economy.repayment_share, 0.0, 1.0)
+	var loan_service: Array = []
+	var loan_interest := 0.0
+	var loan_principal := 0.0
+	for loan in loans:
+		var due := loan_service_due(loan)
+		loan_interest += float(due["interest"])
+		loan_principal += float(due["principal"])
+		loan_service.append({
+			"id": String(loan.get("id", "")),
+			"kind": String(loan.get("kind", "")),
+			"label": loan_label(String(loan.get("kind", ""))),
+			"remaining": float(loan.get("remaining", 0.0)),
+			"interest": float(due["interest"]),
+			"principal": float(due["principal"]),
+		})
+
+	# 3. Erwartete Einzahlungen.
+	var backlog_revenue := 0.0
+	for order in orders:
+		if String(order.get("status", "")) != "accepted":
+			continue
+		var quantity := float(order.get("quantity", 0.0))
+		if quantity <= 0.0:
+			continue
+		var open_share := clampf(
+			1.0 - float(order.get("produced", 0.0)) / quantity, 0.0, 1.0
+		)
+		backlog_revenue += float(order.get("revenue", 0.0)) * open_share
+	var contracted_revenue := 0.0
+	for contract in contracts:
+		if int(contract.get("years_remaining", 0)) > 0:
+			contracted_revenue += float(contract.get("revenue_per_year", 0.0))
+
+	var fixed_costs_cash := 0.0
+	for m in active_machines():
+		fixed_costs_cash += m.spec.cash_fixed_costs()
+
+	var total_out := (
+		fixed_costs_cash + flat_interest + flat_repayment
+		+ loan_interest + loan_principal
+	)
+	var total_in := backlog_revenue + contracted_revenue + economy.receivables
+	return {
+		"working_capital": working_capital,
+		"daily_cost": daily_cost,
+		"phases": phases,
+		"flat_debt": flat_debt,
+		"flat_interest": flat_interest,
+		"flat_repayment": flat_repayment,
+		"loan_service": loan_service,
+		"loan_interest": loan_interest,
+		"loan_principal": loan_principal,
+		"fixed_costs_cash": fixed_costs_cash,
+		"expected_backlog_revenue": backlog_revenue,
+		"expected_contract_revenue": contracted_revenue,
+		"receivables": economy.receivables,
+		"expected_inflow": total_in,
+		"expected_outflow": total_out,
+		"net_plan": total_in - total_out,
+		"cash": economy.cash,
+	}
+
+
+## Anzahl der Aktien, in die das Unternehmen gedanklich zerlegt ist.
+## Eine reine Rechengroesse fuer die Aktienbewertung.
+const SHARES_OUTSTANDING := 1000.0
+
+## Aktienbewertung des eigenen Unternehmens als Lernwerkzeug.
+##
+## Die Firma wird gedanklich in 1.000 Aktien zerlegt. Bewertet wird
+## mit den Verfahren aus dem Lernsystem: Buchwert je Aktie, Ergebnis
+## je Aktie, CAPM-Eigenkapitalkosten und Gordon-Wachstumsmodell.
+## Das Wachstum folgt der nachhaltigen Wachstumsrate
+## g = Thesaurierungsquote x Eigenkapitalrendite – damit haengt der
+## Unternehmenswert direkt an der eigenen Dividendenpolitik.
+func share_valuation(
+	risk_free: float = 0.025, beta: float = 1.1, market_return: float = 0.08
+) -> Dictionary:
+	var shares := SHARES_OUTSTANDING
+	# Basis ist das zuletzt FESTGESTELLTE Jahresergebnis (externe
+	# Sicht: ohne kalkulatorische Zinsen). Das laufende Jahr ist
+	# keine Basis – seine Kosten werden erst beim Jahresabschluss
+	# gebucht, der Zwischenstand waere systematisch zu optimistisch.
+	var profit := economy.profit_current_year + economy.imputed_interest_year
+	var eps_value := profit / shares
+	var book_value := economy.equity / shares
+	var payout := clampf(economy.dividend_policy_ratio, 0.0, 1.0)
+	var dividend := maxf(0.0, eps_value * payout)
+	var roe := 0.0
+	if economy.equity > 0.0:
+		roe = profit / economy.equity
+	var growth := BWLEngine.sustainable_growth(1.0 - payout, roe)
+	# Wachstum deckeln: Gordon braucht r > g, und dauerhaft mehr als
+	# 5 % Wachstum verspricht kein seriöser Plan.
+	growth = clampf(growth, 0.0, 0.05)
+	var r := BWLEngine.capm(risk_free, beta, market_return)
+	var d1 := dividend * (1.0 + growth)
+	var gordon_value: Variant = null
+	if d1 > 0.0 and r > growth:
+		gordon_value = BWLEngine.gordon(d1, r, growth)
+	return {
+		"shares": shares,
+		"profit": profit,
+		"eps": eps_value,
+		"book_value_per_share": book_value,
+		"payout_ratio": payout,
+		"dividend_per_share": dividend,
+		"roe": roe,
+		"growth": growth,
+		"cost_of_equity": r,
+		"gordon_value": gordon_value,
+	}
+
+
+## Lohmann-Ruchti-Ausblick fuer den eigenen Maschinenpark.
+##
+## Der Kapazitaetserweiterungseffekt: Abschreibungsgegenwerte
+## fliessen als Umsatz zurueck und finanzieren neue Anlagen, bevor
+## die alten ausscheiden. Gerechnet wird mit der am haeufigsten
+## vorhandenen Anlagenart im aktiven Bestand.
+func lohmann_ruchti_outlook(years: int = 7) -> Dictionary:
+	var counts: Dictionary = {}
+	for m in active_machines():
+		var key := m.spec.id
+		counts[key] = int(counts.get(key, 0)) + 1
+	if counts.is_empty():
+		return {"ok": false, "error": "Keine aktive Anlage im Bestand."}
+	var best_id: StringName = &""
+	var best_count := 0
+	for key in counts:
+		if int(counts[key]) > best_count:
+			best_count = int(counts[key])
+			best_id = key
+	var spec: MachineSpec = specs.get(best_id)
+	if spec == null:
+		return {"ok": false, "error": "Anlagentyp unbekannt."}
+	return {
+		"ok": true,
+		"spec_id": String(best_id),
+		"display_name": spec.display_name,
+		"machines": best_count,
+		"cost_per_machine": spec.acquisition_cost,
+		"useful_life": spec.useful_life_years,
+		"rows": BWLEngine.lohmann_ruchti(
+			best_count, spec.acquisition_cost, spec.useful_life_years, years
+		),
+	}
 
 ## Alle Maschinen im aktiven Betrieb.
 func active_machines() -> Array[MachineInstance]:
@@ -1939,6 +2330,8 @@ func to_dict() -> Dictionary:
 		"material_inventory": material_inventory,
 		"intermediate_inventory": intermediate_inventory,
 		"finished_goods": finished_goods,
+		"loans": loans,
+		"loan_sequence": loan_sequence,
 		"stats": stats,
 	}
 
@@ -1988,6 +2381,10 @@ func from_dict(data: Dictionary) -> void:
 	# Der Fertigwarenbestand gehoert zum Spielstand: gefertigte,
 	# noch nicht ausgelieferte Ware ueberlebt den Neustart.
 	finished_goods = float(data.get("finished_goods", 0.0))
+	# Strukturierte Darlehen: Tilgungsplaene laufen ueber Jahre und
+	# muessen den Neustart ueberleben.
+	loans = data.get("loans", [])
+	loan_sequence = int(data.get("loan_sequence", loans.size()))
 	stats = data.get("stats", stats)
 
 

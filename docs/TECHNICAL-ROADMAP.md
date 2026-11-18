@@ -111,12 +111,48 @@ eine nicht existierende Methode, `_average_material_price()` fehlte.
 - LKW folgt der Hauptstraße und hält an der Ladezone
 - Tageslicht statt Nachtszene, prozeduraler Himmel, SSAO + SSIL
 
-### Phase 5 — Wirtschaftstiefe  ⬜
+### Phase 5 — Wirtschaftstiefe  ✅
 
-- Fremdfinanzierung, Tilgungspläle, Dividendenpolitik
-- Finanzplanung (Kapitalbedarfsrechnung, Cashflow-Plan)
-- Innenfinanzierung (Lohmann-Ruchti als Spielmechanik)
-- Aktienbewertung (DDM, CAPM, Gordon) als Bewertungswerkzeug
+- Fremdfinanzierung, Tilgungspläne, Dividendenpolitik ✅
+- Finanzplanung (Kapitalbedarfsrechnung, Cashflow-Plan) ✅
+- Innenfinanzierung (Lohmann-Ruchti als Spielmechanik) ✅
+- Aktienbewertung (DDM, CAPM, Gordon) als Bewertungswerkzeug ✅
+
+**Strukturierte Darlehen** (`take_structured_loan`): Annuitäten-,
+Raten- und endfällige Darlehen. Der Schuldendienst wird beim
+Jahresabschluss exakt nach `BWLEngine.amortization_plan` gebucht —
+derselbe Stoff, den das Lernsystem lehrt, treibt die Simulation.
+Fremdkapital ohne Tilgungsplan folgt weiter der pauschalen
+Tilgungsregel (`repayment_share`); strukturierte Darlehen sind davon
+ausgenommen (keine Doppeltilgung). Reicht die Liquidität für die
+planmäßige Tilgung nicht, bleibt der Rest als Schuld stehen und
+kostet weiter Zinsen.
+
+**Dividendenpolitik** (`set_dividend_policy`): Ausschüttungsquote
+0–100 % des Jahresüberschusses, automatisch beim Jahresabschluss
+beschlossen. Nur positive Ergebnisse schütten aus, gedeckelt von
+der Liquidität. Was nicht ausgeschüttet wird, bleibt als
+Selbstfinanzierung im Unternehmen — und erhöht über die nachhaltige
+Wachstumsrate g = Thesaurierungsquote × EK-Rendite den
+Unternehmenswert im Gordon-Modell: Die eigene Dividendenpolitik hat
+sichtbare Bewertungsfolgen.
+
+**Finanzplan** (`financial_plan`): Kapitalbedarf des
+Umlaufvermögens nach dem Lehrbuchverfahren (Kapitalbindungsdauer ×
+zahlungswirksame Tageskosten, `working_capital_need`), Schuldendienst
+des kommenden Jahres je Darlehen, erwartete Einzahlungen aus
+Auftragsbestand, Rahmenverträgen und Forderungen, Plansaldo.
+
+**Aktienbewertung** (`share_valuation`): Die Firma gedanklich in
+1 000 Aktien zerlegt; EPS, Buchwert je Aktie, CAPM-Kapitalkosten,
+nachhaltiges Wachstum und Gordon-Kurs. Basis ist das zuletzt
+festgestellte Jahresergebnis (der Zwischenstand des laufenden Jahres
+wäre systematisch zu optimistisch, weil Kosten erst am Abschluss
+gebucht werden).
+
+**Lohmann-Ruchti** (`lohmann_ruchti_outlook`): Ausblick auf den
+Kapazitätserweiterungseffekt für die häufigste Anlagenart, in Parität
+zur Engine-Funktion des Lernsystems.
 
 ### Mehrstufige Produktionskette  ✅
 

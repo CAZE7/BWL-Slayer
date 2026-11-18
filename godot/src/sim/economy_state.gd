@@ -62,6 +62,12 @@ var inventory_value: float = 0.0
 var dividends_paid: float = 0.0
 ## im laufenden Jahr gezahlte Dividende
 var dividend_current_year: float = 0.0
+## Ausschuettungsquote der Dividendenpolitik (0..1): Anteil des
+## Jahresueberschusses, der beim Jahresabschluss automatisch als
+## Dividende ausgeschuettet wird. 0 = Vollthesaurierung (Standard).
+## Was nicht ausgeschuettet wird, bleibt als Selbstfinanzierung im
+## Unternehmen und staerkt das Eigenkapital.
+var dividend_policy_ratio: float = 0.0
 
 ## Reputation (0..100)
 var reputation: float = 12.0
@@ -272,6 +278,7 @@ func to_dict() -> Dictionary:
 		"inventory_value": inventory_value,
 		"dividends_paid": dividends_paid,
 		"dividend_current_year": dividend_current_year,
+		"dividend_policy_ratio": dividend_policy_ratio,
 		"reputation": reputation,
 		"repayment_share": repayment_share,
 		"auto_repayment": auto_repayment,
@@ -302,6 +309,7 @@ func from_dict(data: Dictionary) -> void:
 	inventory_value = float(data.get("inventory_value", 0.0))
 	dividends_paid = float(data.get("dividends_paid", 0.0))
 	dividend_current_year = float(data.get("dividend_current_year", 0.0))
+	dividend_policy_ratio = clampf(float(data.get("dividend_policy_ratio", 0.0)), 0.0, 1.0)
 	reputation = float(data.get("reputation", 12.0))
 	repayment_share = clampf(float(data.get("repayment_share", 0.10)), 0.0, 1.0)
 	auto_repayment = bool(data.get("auto_repayment", true))

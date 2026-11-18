@@ -45,6 +45,7 @@ static func create_default_save(slot_id: String, player_name: String = "CFO Deli
 			"inventory_value": 0.0,
 			"dividends_paid": 0.0,
 			"dividend_current_year": 0.0,
+			"dividend_policy_ratio": 0.0,
 			"reputation": 12.0,
 		},
 		"progress": {
