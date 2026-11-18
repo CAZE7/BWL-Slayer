@@ -332,11 +332,23 @@ static func _test_company_lab(t: TestFramework) -> void:
 	var tasks := CompanyLab.build_tasks(sim)
 	t.check_true("Betriebsaufgaben erzeugt", tasks.size() >= 6)
 
-	# Jede Aufgabe hat Felder und eine Loesung.
+	# Jede Aufgabe hat Felder und eine Loesung. Und: Alle Texte sind
+	# FERTIG formatiert - ein uebrig gebliebener Platzhalter (%s,
+	# %.1f) hiesse, eine %-Formatierung ist zur Laufzeit gescheitert
+	# (so wurde die Doppel-Formatierung in der ROI-Aufgabe gefunden).
 	for task in tasks:
 		t.check_true("Aufgabe '%s' hat Felder" % task.id, not task.fields.is_empty())
 		t.check_true("Aufgabe '%s' hat eine Loesung" % task.id, task.solution != "")
 		t.check_true("Aufgabe '%s' hat einen Hinweis" % task.id, task.hint != "")
+		var texts: Array[String] = [
+			String(task.prompt), String(task.solution),
+			String(task.given), String(task.hint),
+		]
+		var fully_formatted := true
+		for text in texts:
+			if text.contains("%s") or text.contains("%.1f") or text.contains("%d"):
+				fully_formatted = false
+		t.check_true("Aufgabe '%s' vollstaendig formatiert" % task.id, fully_formatted)
 
 	# Die Deckungsbeitragsaufgabe muss exakt zur Simulation passen.
 	var found := false

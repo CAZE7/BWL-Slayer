@@ -326,11 +326,14 @@ static func _task_roi(s: Snapshot) -> Task:
 	t.fields = [
 		Field.new("ekr", "Eigenkapitalrendite", roi * 100.0, "%", 0.1),
 	]
+	# WICHTIG: nur EINMAL formatieren. Eine zweite %-Runde ueber den
+	# bereits formatierten Text wuerde am entstandenen literalen
+	# Prozentzeichen ("... = 12,3 %.") mit einem Laufzeitfehler
+	# scheitern und den Text unformatiert lassen.
 	t.solution = (
 		"%s € ÷ %s € = %.1f %%. Das bedeutet: Auf jeden Euro Eigenkapital "
-		% [_format_eur(s.profit), _format_eur(equity), roi * 100.0]
 		+ "entstehen %.1f Cent Gewinn."
-	) % (roi * 100.0)
+	) % [_format_eur(s.profit), _format_eur(equity), roi * 100.0, roi * 100.0]
 	return t
 
 
