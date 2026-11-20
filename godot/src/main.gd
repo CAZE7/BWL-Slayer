@@ -49,6 +49,11 @@ var factory_view: FactoryView
 var camera_rig: CameraRig
 var _current_nav: String = "production"
 
+# Dublettensperre fuer Toasts: Der Advisor meldet manche Ereignisse
+# doppelt (einmal als Benachrichtigung, einmal als Beraterhinweis).
+# Gleicher Titel innerhalb weniger Sekunden erscheint nur einmal.
+var _recent_toast_titles: Dictionary = {}
+
 
 func _ready() -> void:
 	# Mindestfenstergroesse: Darunter wuerden Seitenleiste und
@@ -56,7 +61,13 @@ func _ready() -> void:
 	# (canvas_items/expand) stehen in der Projektkonfiguration -
 	# zusammen traegt das beliebige Aufloesungen ab 1152x648.
 	get_window().min_size = Vector2i(1152, 648)
+	# Ein zentrales Theme statt Einzel-Styling: Damit sehen ALLE
+	# Knoepfe, Schalter und Tooltips gleich aus - auch die, die
+	# spaeter dynamisch entstehen. Einzelne Overrides (Navigation,
+	# aktive Zustaende) setzen gezielt darauf auf.
+	theme = _build_theme()
 	_build_ui()
+	EventBus.notification.connect(_on_notification)
 	EventBus.simulation_ticked.connect(_on_tick)
 	EventBus.economy_changed.connect(func(_s): _refresh_header())
 	EventBus.cash_changed.connect(func(_c, _d): _refresh_header())
@@ -203,10 +214,12 @@ func _build_ui() -> void:
 	# --- Overlay: Toast ---
 	var toast_layer := VBoxContainer.new()
 	toast_layer.name = "Toasts"
+	# Die Toasts liegen LINKS neben der Seitenleiste, nicht darueber:
+	# Meldungen duerfen die Finanztabellen nicht verdecken.
 	toast_layer.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	toast_layer.offset_left = -380
-	toast_layer.offset_top = -160
-	toast_layer.offset_right = -20
+	toast_layer.offset_left = -700
+	toast_layer.offset_top = -480
+	toast_layer.offset_right = -340
 	toast_layer.offset_bottom = -70
 	toast_layer.alignment = BoxContainer.ALIGNMENT_END
 	toast_layer.add_theme_constant_override("separation", 8)
@@ -224,7 +237,10 @@ func _build_nav() -> Control:
 	panel.custom_minimum_size = Vector2(212, 0)
 	panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
 	panel.offset_right = 212
-	panel.add_theme_stylebox_override("panel", _style(Color(0.067, 0.078, 0.094, 0.97), 0))
+	var nav_style := _style(Color(0.067, 0.078, 0.094, 0.97), 0)
+	nav_style.border_width_right = 1
+	nav_style.border_color = Color(UI["border"].r, UI["border"].g, UI["border"].b, 0.45)
+	panel.add_theme_stylebox_override("panel", nav_style)
 
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 4)
@@ -245,6 +261,8 @@ func _build_nav() -> Control:
 	mark.add_child(mark_label)
 
 	var brand_text := VBoxContainer.new()
+	brand_text.add_theme_constant_override("separation", 0)
+	brand_text.alignment = BoxContainer.ALIGNMENT_CENTER
 	var b1 := Label.new()
 	b1.text = "DELIZIOSO AG"
 	b1.add_theme_font_size_override("font_size", 14)
@@ -252,8 +270,15 @@ func _build_nav() -> Control:
 	b2.text = "BWL SLAYER"
 	b2.add_theme_font_size_override("font_size", 10)
 	b2.add_theme_color_override("font_color", UI["text_faint"])
+	# Zusammenbau: Logo-Kachel links, zweizeiliger Schriftzug rechts.
+	# (Vorher wurden Kachel und Schriftzug erzeugt, aber nie in den
+	# Baum gehaengt - die Marke fehlte komplett, und die Waisen-Nodes
+	# standen als "ObjectDB leaked instances" im Testprotokoll.)
+	brand_text.add_child(b1)
+	brand_text.add_child(b2)
+	brand.add_child(mark)
+	brand.add_child(brand_text)
 	box.add_child(brand)
-	box.add_child(brand_text)
 
 	box.add_child(HSeparator.new())
 
@@ -323,7 +348,10 @@ func _build_header() -> Control:
 	panel.offset_left = 212
 	panel.offset_right = -320
 	panel.offset_bottom = 58
-	panel.add_theme_stylebox_override("panel", _style(Color(0.075, 0.086, 0.102, 0.96), 0))
+	var header_style := _style(Color(0.075, 0.086, 0.102, 0.96), 0)
+	header_style.border_width_bottom = 1
+	header_style.border_color = Color(UI["border"].r, UI["border"].g, UI["border"].b, 0.45)
+	panel.add_theme_stylebox_override("panel", header_style)
 
 	var box := HBoxContainer.new()
 	box.add_theme_constant_override("separation", 26)
@@ -372,7 +400,10 @@ func _build_sidebar() -> Control:
 	panel.offset_left = -320
 	panel.offset_right = 0
 	panel.offset_bottom = -56
-	panel.add_theme_stylebox_override("panel", _style(Color(0.075, 0.086, 0.102, 0.97), 0))
+	var side_style := _style(Color(0.075, 0.086, 0.102, 0.97), 0)
+	side_style.border_width_left = 1
+	side_style.border_color = Color(UI["border"].r, UI["border"].g, UI["border"].b, 0.45)
+	panel.add_theme_stylebox_override("panel", side_style)
 
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -394,7 +425,10 @@ func _build_timeline() -> Control:
 	panel.offset_left = 212
 	panel.offset_right = -320
 	panel.offset_top = -56
-	panel.add_theme_stylebox_override("panel", _style(Color(0.075, 0.086, 0.102, 0.96), 0))
+	var time_style := _style(Color(0.075, 0.086, 0.102, 0.96), 0)
+	time_style.border_width_top = 1
+	time_style.border_color = Color(UI["border"].r, UI["border"].g, UI["border"].b, 0.45)
+	panel.add_theme_stylebox_override("panel", time_style)
 
 	var box := HBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
@@ -416,6 +450,7 @@ func _build_timeline() -> Control:
 
 	for i in range(1, Simulation.SPEEDS.size()):
 		var speed_button := Button.new()
+		speed_button.name = "Speed_%d" % i
 		speed_button.text = "×%d" % int(Simulation.SPEEDS[i])
 		speed_button.custom_minimum_size = Vector2(46, 0)
 		speed_button.pressed.connect(func(): Simulation.set_speed(i))
@@ -635,6 +670,23 @@ func _refresh_timeline() -> void:
 	var play := timeline.find_child("PlayPause", true, false) as Button
 	if play != null:
 		play.text = "⏸ Pause" if Simulation.running else "▶ Start"
+	# Die gewaehlte Geschwindigkeit ist sichtbar markiert - sonst
+	# muesste der Spieler raten, wie schnell die Zeit laeuft.
+	for i in range(1, Simulation.SPEEDS.size()):
+		var speed_button := timeline.find_child("Speed_%d" % i, true, false) as Button
+		if speed_button == null:
+			continue
+		if i == Simulation.speed_index and Simulation.running:
+			var active := _style(UI["accent_soft"], 5)
+			active.content_margin_top = 6
+			active.content_margin_bottom = 6
+			active.set_border_width_all(1)
+			active.border_color = UI["accent"]
+			speed_button.add_theme_stylebox_override("normal", active)
+			speed_button.add_theme_color_override("font_color", Color(0.72, 0.85, 0.93))
+		else:
+			speed_button.remove_theme_stylebox_override("normal")
+			speed_button.remove_theme_color_override("font_color")
 
 
 func _on_nav_pressed(nav_id: String) -> void:
@@ -651,6 +703,8 @@ func _on_nav_pressed(nav_id: String) -> void:
 func _on_advisor_message(message: Dictionary) -> void:
 	var toast_layer := get_node_or_null("Toasts") as VBoxContainer
 	if toast_layer == null:
+		return
+	if _toast_title_is_duplicate(String(message.get("title", ""))):
 		return
 
 	var panel := PanelContainer.new()
@@ -701,6 +755,92 @@ func _on_advisor_message(message: Dictionary) -> void:
 	# Der Hinweis verschwindet nach zehn Sekunden. Die Zeit laeuft
 	# unabhaengig von der Simulationsgeschwindigkeit.
 	var timer := get_tree().create_timer(10.0)
+	timer.timeout.connect(func():
+		if is_instance_valid(panel):
+			panel.queue_free()
+	)
+
+
+## Prueft, ob derselbe Toast-Titel gerade erst gezeigt wurde.
+##
+## Rueckgabe true = Duplikat, bitte nicht erneut anzeigen. Merkt sich
+## den Titel andernfalls fuer acht Sekunden.
+func _toast_title_is_duplicate(title: String) -> bool:
+	if title == "":
+		return false
+	var now := Time.get_ticks_msec()
+	var last: Variant = _recent_toast_titles.get(title)
+	if last != null and now - int(last) < 8000:
+		return true
+	_recent_toast_titles[title] = now
+	# Alte Eintraege aufraeumen, damit das Woerterbuch nicht waechst.
+	for key in _recent_toast_titles.keys():
+		if now - int(_recent_toast_titles[key]) >= 8000:
+			_recent_toast_titles.erase(key)
+	return false
+
+
+## Spielereignisse als Toast.
+##
+## Alles, was die Simulation ueber EventBus.notify meldet
+## (Auftrag geliefert, Auftrag storniert, Kredit, Dividende,
+## Vertrag ausgelaufen), erscheint hier kurz am Bildrand. Ohne
+## diesen Renderer liefen die Meldungen ins Leere - der Spieler
+## erfuhr nie, WARUM sich seine Kasse bewegt hat.
+func _on_notification(payload: Dictionary) -> void:
+	var toast_layer := get_node_or_null("Toasts") as VBoxContainer
+	if toast_layer == null:
+		return
+	if _toast_title_is_duplicate(String(payload.get("title", ""))):
+		return
+
+	# Hoechstens vier Meldungen gleichzeitig: die aelteste weicht.
+	var visible_toasts := 0
+	for child in toast_layer.get_children():
+		if not child.is_queued_for_deletion():
+			visible_toasts += 1
+	if visible_toasts >= 4:
+		for child in toast_layer.get_children():
+			if not child.is_queued_for_deletion():
+				child.queue_free()
+				break
+
+	var kind := String(payload.get("kind", "info"))
+	var accent_color: Color = {
+		"success": UI["positive"],
+		"warning": UI["warning"],
+		"danger": UI["danger"],
+	}.get(kind, UI["accent"])
+
+	var panel := PanelContainer.new()
+	var toast_style := _style(Color(0.10, 0.11, 0.13, 0.97), 6)
+	toast_style.border_width_left = 3
+	toast_style.border_color = accent_color
+	panel.add_theme_stylebox_override("panel", toast_style)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+
+	var title := Label.new()
+	title.text = String(payload.get("title", ""))
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", accent_color)
+	v.add_child(title)
+
+	var body := Label.new()
+	body.text = String(payload.get("body", ""))
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.custom_minimum_size = Vector2(300, 0)
+	body.add_theme_font_size_override("font_size", 11)
+	body.add_theme_color_override("font_color", UI["text_muted"])
+	v.add_child(body)
+
+	panel.add_child(v)
+	toast_layer.add_child(panel)
+
+	# Betriebsmeldungen sind fluechtig: nach sechs Sekunden weg.
+	var timer := get_tree().create_timer(6.0)
 	timer.timeout.connect(func():
 		if is_instance_valid(panel):
 			panel.queue_free()
@@ -1893,11 +2033,22 @@ func _fill_stats(box: VBoxContainer) -> void:
 # ==================================================================
 
 func _add_section(box: VBoxContainer, text: String) -> void:
+	# Abstand VOR jeder Sektion (ausser der ersten): Die Seitenleiste
+	# traegt viele Sektionen untereinander - ohne Luft dazwischen
+	# verschwimmen sie zu einer einzigen Tabelle.
+	if box.get_child_count() > 0:
+		var gap := Control.new()
+		gap.custom_minimum_size = Vector2(0, 8)
+		box.add_child(gap)
 	var label := Label.new()
 	label.text = text
 	label.add_theme_font_size_override("font_size", 10)
 	label.add_theme_color_override("font_color", Color(0.40, 0.45, 0.52))
 	box.add_child(label)
+	# Eine feine Linie verankert die Ueberschrift optisch bei ihrem
+	# Inhalt.
+	var rule := HSeparator.new()
+	box.add_child(rule)
 
 
 func _add_metric(box: VBoxContainer, label_text: String, value_text: String) -> void:
@@ -1922,6 +2073,93 @@ func _muted(text: String) -> Label:
 	label.add_theme_font_size_override("font_size", 12)
 	label.add_theme_color_override("font_color", Color(0.45, 0.50, 0.57))
 	return label
+
+
+## Das zentrale Theme der Oberflaeche.
+##
+## Godots Standard-Theme ist hellgrau und wirkt im dunklen
+## Unternehmenssystem wie ein Fremdkoerper. Hier bekommen alle
+## interaktiven Elemente denselben Satz Zustaende:
+## Flaeche (normal) -> aufgehellt (hover) -> abgedunkelt (pressed),
+## dazu ein sichtbarer Fokusrahmen fuer die Tastaturbedienung.
+func _build_theme() -> Theme:
+	var t := Theme.new()
+
+	# --- Knoepfe ---------------------------------------------------
+	var btn_normal := _style(UI["surface_alt"], 5)
+	btn_normal.content_margin_top = 6
+	btn_normal.content_margin_bottom = 6
+	btn_normal.border_width_bottom = 1
+	btn_normal.border_color = Color(0.0, 0.0, 0.0, 0.35)
+
+	var btn_hover := _style(Color(0.145, 0.165, 0.190), 5)
+	btn_hover.content_margin_top = 6
+	btn_hover.content_margin_bottom = 6
+	btn_hover.border_width_bottom = 1
+	btn_hover.border_color = Color(0.0, 0.0, 0.0, 0.35)
+
+	var btn_pressed := _style(Color(0.080, 0.092, 0.108), 5)
+	btn_pressed.content_margin_top = 6
+	btn_pressed.content_margin_bottom = 6
+
+	var btn_disabled := _style(Color(0.090, 0.100, 0.115), 5)
+	btn_disabled.content_margin_top = 6
+	btn_disabled.content_margin_bottom = 6
+
+	# Fokus: ein klarer Akzentrahmen. Wer mit der Tastatur spielt,
+	# muss sehen, welches Element gerade den Fokus hat.
+	var btn_focus := StyleBoxFlat.new()
+	btn_focus.bg_color = Color(0, 0, 0, 0)
+	btn_focus.set_corner_radius_all(5)
+	btn_focus.set_border_width_all(1)
+	btn_focus.border_color = UI["accent"]
+
+	t.set_stylebox("normal", "Button", btn_normal)
+	t.set_stylebox("hover", "Button", btn_hover)
+	t.set_stylebox("pressed", "Button", btn_pressed)
+	t.set_stylebox("disabled", "Button", btn_disabled)
+	t.set_stylebox("focus", "Button", btn_focus)
+	t.set_color("font_color", "Button", UI["text"])
+	t.set_color("font_hover_color", "Button", Color(0.96, 0.97, 0.99))
+	t.set_color("font_pressed_color", "Button", UI["accent"])
+	t.set_color("font_focus_color", "Button", UI["text"])
+	t.set_color("font_disabled_color", "Button", UI["text_faint"])
+	t.set_font_size("font_size", "Button", 13)
+
+	# --- Beschriftungen ---------------------------------------------
+	t.set_color("font_color", "Label", UI["text"])
+	t.set_color("font_color", "CheckButton", UI["text"])
+	t.set_color("font_color", "CheckBox", UI["text"])
+
+	# --- Trennlinien -------------------------------------------------
+	var sep := StyleBoxLine.new()
+	sep.color = Color(UI["border"].r, UI["border"].g, UI["border"].b, 0.5)
+	t.set_stylebox("separator", "HSeparator", sep)
+
+	# --- Fortschrittsbalken ------------------------------------------
+	var bar_bg := _style(UI["surface"], 3)
+	bar_bg.content_margin_left = 0
+	bar_bg.content_margin_right = 0
+	bar_bg.content_margin_top = 0
+	bar_bg.content_margin_bottom = 0
+	var bar_fill := _style(UI["accent"], 3)
+	bar_fill.content_margin_left = 0
+	bar_fill.content_margin_right = 0
+	bar_fill.content_margin_top = 0
+	bar_fill.content_margin_bottom = 0
+	t.set_stylebox("background", "ProgressBar", bar_bg)
+	t.set_stylebox("fill", "ProgressBar", bar_fill)
+
+	# --- Tooltips -----------------------------------------------------
+	# Der helle Standard-Tooltip wuerde im dunklen System blenden.
+	var tip := _style(Color(0.10, 0.11, 0.13, 0.98), 4)
+	tip.set_border_width_all(1)
+	tip.border_color = UI["border"]
+	t.set_stylebox("panel", "TooltipPanel", tip)
+	t.set_color("font_color", "TooltipLabel", UI["text"])
+	t.set_font_size("font_size", "TooltipLabel", 12)
+
+	return t
 
 
 func _style(color: Color, radius: int) -> StyleBoxFlat:
