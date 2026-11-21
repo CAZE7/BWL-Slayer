@@ -1,0 +1,246 @@
+{
+ "generated_from": "src/engine.js",
+ "tolerance": 0.01,
+ "values": [
+  {
+   "label": "auto_a_fixkosten",
+   "value": 5980.2
+  },
+  {
+   "label": "auto_b_fixkosten",
+   "value": 6445.7
+  },
+  {
+   "label": "auto_xkrit",
+   "value": 116.375
+  },
+  {
+   "label": "auto_a_kosten_15000km",
+   "value": 9880.2
+  },
+  {
+   "label": "auto_b_kosten_15000km",
+   "value": 9745.7
+  },
+  {
+   "label": "auto_a_kosten_40000km",
+   "value": 16380.2
+  },
+  {
+   "label": "auto_b_kosten_40000km",
+   "value": 15245.7
+  },
+  {
+   "label": "abfuell_afa_1",
+   "value": 30333.333333333332
+  },
+  {
+   "label": "abfuell_zinsen_1",
+   "value": 2970
+  },
+  {
+   "label": "abfuell_fixkosten_1",
+   "value": 34303.33333333333
+  },
+  {
+   "label": "abfuell_fixkosten_2",
+   "value": 37066.66666666667
+  },
+  {
+   "label": "abfuell_xkrit",
+   "value": 2763.333333333343
+  },
+  {
+   "label": "abfuell_rentabilitaet_1",
+   "value": -45.057239057239045
+  },
+  {
+   "label": "abfuell_kumulation_jahre",
+   "value": 3.6666666666666665
+  },
+  {
+   "label": "df_10_2",
+   "value": 0.8264462809917354
+  },
+  {
+   "label": "rbf_10_10",
+   "value": 6.144567105704685
+  },
+  {
+   "label": "anf_10_10",
+   "value": 0.16274539488251152
+  },
+  {
+   "label": "kapitalwert",
+   "value": -6112.287412062022
+  },
+  {
+   "label": "annuitaet",
+   "value": -1928.248222365869
+  },
+  {
+   "label": "pi_kapitalwert",
+   "value": -0.3056143706031011
+  },
+  {
+   "label": "pi_barwert",
+   "value": 0.694385629396899
+  },
+  {
+   "label": "sekante_i",
+   "value": -0.06704774872059721
+  },
+  {
+   "label": "irr_bisektion",
+   "value": -0.036932941584938705
+  },
+  {
+   "label": "irr_einzahlung",
+   "value": 0.22474487139158894
+  },
+  {
+   "label": "irr_ewige_rente",
+   "value": 0.1
+  },
+  {
+   "label": "renten_irr_approx",
+   "value": 0
+  },
+  {
+   "label": "bond_barwert",
+   "value": 958.9980256405238
+  },
+  {
+   "label": "kassazinssatz",
+   "value": 0.01031145931793609
+  },
+  {
+   "label": "macauley_duration",
+   "value": 4.534652549779575
+  },
+  {
+   "label": "modified_duration",
+   "value": 4.2779741035656365
+  },
+  {
+   "label": "portfolioduration",
+   "value": 8.232
+  },
+  {
+   "label": "lr_rest_jahr1",
+   "value": 0
+  },
+  {
+   "label": "lr_gekauft_jahr7",
+   "value": 3
+  },
+  {
+   "label": "lr_aktiv_jahr7",
+   "value": 15
+  },
+  {
+   "label": "bezugsrechtswert",
+   "value": 5.88888888888889
+  },
+  {
+   "label": "mischkurs",
+   "value": 93.33333333333333
+  },
+  {
+   "label": "kapitalerhoehung",
+   "value": 50
+  },
+  {
+   "label": "agio",
+   "value": 3950
+  },
+  {
+   "label": "skontozins",
+   "value": 48
+  },
+  {
+   "label": "leverage_roe",
+   "value": 11.25
+  },
+  {
+   "label": "leverage_gewinn",
+   "value": 90000
+  },
+  {
+   "label": "leverage2_roe",
+   "value": 17.5
+  },
+  {
+   "label": "annuitaet_plan",
+   "value": 2309.7479812826796
+  },
+  {
+   "label": "kapitalbindungsdauer",
+   "value": 90
+  },
+  {
+   "label": "kapitalbedarf",
+   "value": 1080000
+  },
+  {
+   "label": "eps",
+   "value": 2.875
+  },
+  {
+   "label": "kgv",
+   "value": 20.869565217391305
+  },
+  {
+   "label": "dividendenrendite_prozent",
+   "value": 3.3333333333333335
+  },
+  {
+   "label": "barwert_dividenden",
+   "value": 6.376695625666818
+  },
+  {
+   "label": "fairer_wert_mit_verkauf",
+   "value": 65.91411370217952
+  },
+  {
+   "label": "gordon_p0",
+   "value": 49.99999999999999
+  },
+  {
+   "label": "implizites_wachstum_prozent",
+   "value": 5
+  },
+  {
+   "label": "capm_prozent",
+   "value": 11.399999999999999
+  },
+  {
+   "label": "capm_gordon",
+   "value": 47.61904761904763
+  },
+  {
+   "label": "zweiphasen_d3",
+   "value": 2.6449999999999996
+  },
+  {
+   "label": "zweiphasen_terminal",
+   "value": 45.405833333333334
+  },
+  {
+   "label": "zweiphasen_wert",
+   "value": 40.8747860730017
+  },
+  {
+   "label": "nachhaltiges_wachstum_prozent",
+   "value": 7.199999999999999
+  },
+  {
+   "label": "bewertung_kgv_multiple",
+   "value": 63.25
+  },
+  {
+   "label": "gesamtrendite_prozent",
+   "value": 14.000000000000002
+  }
+ ]
+}

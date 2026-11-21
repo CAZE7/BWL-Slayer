@@ -1,0 +1,114 @@
+; BWL Slayer · Godot 4 Projektkonfiguration
+;
+; Engine-Konfiguration bleibt bewusst minimal: Renderer auf Forward+ (3D),
+; deterministischer Physik-Tick, feste Bildrate für stabile Simulation.
+
+config_version=5
+
+[application]
+
+config/name="BWL Slayer"
+config/description="Premium Industrial Business Simulation – BWL-Simulator der Delizioso AG"
+config/version="0.1.0"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+config/icon="res://assets/icon.svg"
+boot_splash/bg_color=Color(0.027, 0.039, 0.063, 1)
+boot_splash/show_image=false
+config/windows_native_icon="res://assets/icon.svg"
+
+[autoload]
+
+EventBus="*res://src/core/event_bus.gd"
+GameState="*res://src/core/game_state.gd"
+SaveService="*res://src/core/save_service.gd"
+Simulation="*res://src/sim/simulation.gd"
+Advisor="*res://src/advisor/advisor.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/size/window_width_override=1600
+window/size/window_height_override=900
+window/size/resizable=true
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/vsync/vsync_mode=1
+
+[dotnet]
+
+project/assembly_name="BwlSlayer"
+
+; Kein gdUnit4: Das Projekt nutzt einen eigenen, abhängigkeitsfreien
+; Test-Runner (godot/tests/). Ein Plugin auf nicht vorhandene Pfade zu
+; aktivieren verhindert den headless Import.
+
+[gui]
+
+
+[importer_defaults]
+
+texture={
+"compress/mode": 0
+}
+
+[debug]
+
+gdscript/warnings/enable=true
+gdscript/warnings/inferred_declaration=1
+gdscript/warnings/unsafe_method_access=1
+gdscript/warnings/unsafe_property_access=1
+gdscript/warnings/unsafe_cast=1
+gdscript/warnings/unsafe_call_argument=1
+gdscript/warnings/untyped_declaration=0
+gdscript/warnings/unused_variable=1
+gdscript/warnings/unused_private_class_variable=0
+gdscript/warnings/unused_parameter=0
+gdscript/warnings/shadowed_variable=1
+gdscript/warnings/shadowed_variable_base_class=1
+gdscript/warnings/return_value_discarded=0
+gdscript/warnings/narrowing_conversion=1
+gdscript/warnings/int_as_enum_without_cast=1
+gdscript/warnings/int_as_enum_without_match=1
+gdscript/warnings/static_called_on_instance=1
+gdscript/warnings/confusable_identifier=1
+gdscript/warnings/confusable_local_declaration=1
+gdscript/warnings/confusable_local_usage=1
+gdscript/warnings/redundant_await=1
+gdscript/warnings/assert_always_true=1
+gdscript/warnings/assert_always_false=1
+gdscript/warnings/integer_division=1
+gdscript/warnings/standalone_expression=1
+gdscript/warnings/standalone_ternary=1
+gdscript/warnings/property_used_as_function=1
+gdscript/warnings/call_void_method=1
+
+[input]
+
+ui_toggle_dev={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":4194338,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+
+[layer_names]
+
+2d_physics/layer_1="world"
+2d_physics/layer_2="buildings"
+2d_physics/layer_3="vehicles"
+2d_physics/layer_4="interaction"
+
+[physics]
+
+common/physics_ticks_per_second=60
+3d/default_gravity=0.0
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+textures/vram_compression/import_etc2_astc=true
+anti_aliasing/quality/msaa_3d=2
+anti_aliasing/quality/screen_space_aa=1
+environment/defaults/default_clear_color=Color(0.027, 0.039, 0.063, 1)
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=3
