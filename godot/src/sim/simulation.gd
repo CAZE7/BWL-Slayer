@@ -1,0 +1,2486 @@
+extends Node
+class_name SimulationEngine
+
+## Die Wirtschaftssimulation.
+##
+## Deterministisch: der gleiche Startzustand + die gleiche Folge von
+## Aktionen erzeugt immer exakt denselben Ablauf. Kein Zufall in der
+## Wirtschaftsrechnung; Nachfrage folgt definierten Regeln.
+##
+## Der Klassenname `SimulationEngine` weicht bewusst vom Autoload-Namen
+## `Simulation` ab: Godot verbietet es, dass eine `class_name` einen
+## Autoload-Singleton verdeckt. Mit dem abweichenden Namen bleibt die
+## Klasse trotzdem direkt instanziierbar – so koennen Tests mit einer
+## isolierten Simulation arbeiten, ohne den laufenden Spielzustand
+## zu veraendern.
+##
+## Zeitsteuerung: TAGE_PRO_JAHR simulierte Tage pro Echtzeit-Sekunde
+## (abhängig von der Geschwindigkeit), Ticks sind ganzzahlig.
+
+const DAYS_PER_YEAR := 360
+const DAYS_PER_MONTH := 30
+## Standardlieferzeit des Materialmarkts in Tagen.
+##
+## Material kommt nicht sofort. Der Spieler muss den Bestand planen:
+## unterhalb des Vorlaufs stoppt die Produktion.
+const MATERIAL_LEAD_TIME_DAYS := 5
+const MONTH_DAYS := 30
+
+## Geschwindigkeitsstufen (Tage pro Sekunde)
+const SPEEDS := [0.0, 1.0, 3.0, 8.0, 20.0]
+
+var running: bool = false
+var speed_index: int = 1
+var day: int = 0
+var year: int = 1
+var tick: int = 0
+var days_per_second: float = 1.0
+
+## --- Zustand ---
+var economy := EconomyState.new()
+var grid := FactoryGrid.new()
+var machines: Dictionary = {}       ## instance_id -> MachineInstance
+var specs: Dictionary = {}          ## spec_id -> MachineSpec
+var orders: Array = []              ## Kundenaufträge (offen)
+var completed_orders: Array = []    ## abgeschlossene Kundenaufträge
+var deliveries: Array = []          ## laufende Lieferungen
+var material_deliveries: Array = [] ## laufende Materiallieferungen
+## Rahmenverträge: langfristige Bindungen mit Kunden.
+##
+## Ein Rahmenvertrag sichert eine Mindestmenge zu einem festen Preis
+## ab. Das macht die Nachfrage planbar – aber der Preis liegt
+## fest. Wer zu billig verkauft, bindet Kapital auf Jahre.
+var contracts: Array = []
+## Laufende Nummer fuer Vertrags-IDs. Nur der Tag allein waere
+## nicht eindeutig: Zwei Vertraege am selben Tag bekaemen dieselbe
+## ID, und eine Kuendigung traefe den falschen Vertrag.
+var contract_sequence: int = 0
+var inventory_material: float = 0.0 ## kg Material im Lager (Sonderfall ohne Typ)
+## Die Materialbestände je Materialart: material_type -> kg
+##
+## Jede Materialart wird getrennt gelagert, bestellt und bewertet.
+## Das ist die Grundlage der Produktionskette: Eine Förderbandlinie
+## braucht Stahl, ein Verpackungsautomat Verpackungsmaterial.
+var material_inventory: Dictionary = {}
+## Zwischenproduktbestände: output_product -> Stückzahl
+##
+## Das ist das Lager zwischen den Produktionsstufen. Eine Folgestufe
+## kann nur produzieren, was die Vorstufe tatsaechlich geliefert hat
+## und was noch im Lager liegt. Damit wird die Produktionskette
+## wirklich gekoppelt: zu wenig Vorstufenleistung bremst die
+## Endstufe aus.
+var intermediate_inventory: Dictionary = {}
+## Fertigwarenbestand: produzierte, noch nicht ausgelieferte
+## Endprodukt-Einheiten.
+##
+## Die Produktion fuellt diesen Pool, die Auftragsabwicklung
+## entnimmt daraus. Wird ein Auftrag storniert, fallen seine schon
+## gefertigten Stuecke in den Pool zurueck und bedienen den
+## naechsten Auftrag – gefertigte Ware verschwindet nicht einfach.
+##
+## Bilanzielle Vereinfachung (dokumentiert): Der Fertigwarenbestand
+## wird mit 0 bewertet. Seine Herstellkosten (variable Kosten,
+## Material) sind beim Entstehen bereits als Aufwand und Auszahlung
+## erfasst – das ist das Vorsichtsprinzip in seiner strengsten Form
+## und haelt die Bilanzlogik des Spiels einfach.
+var finished_goods: float = 0.0
+
+## Strukturierte Darlehen mit Tilgungsplan.
+##
+## Jeder Eintrag: {id, kind, principal, rate, years, years_elapsed,
+## remaining}. `kind` ist ANNUITY (Annuitaetendarlehen, konstante
+## Jahresrate), REDEMPTION (Ratendarlehen, konstante Tilgung) oder
+## FEST (endfaellig, Tilgung komplett am Ende). Der Schuldendienst
+## wird beim Jahresabschluss nach Plan gebucht. Fremdkapital, das
+## NICHT aus strukturierten Darlehen stammt, folgt weiter der
+## pauschalen Tilgungsregel (repayment_share).
+var loans: Array = []
+## Fortlaufende Nummer fuer eindeutige Darlehens-IDs.
+var loan_sequence: int = 0
+var day_accumulator: float = 0.0
+
+## Produktionseinstellungen (vom Spieler steuerbar)
+var production_enabled: bool = true
+## Auftragsannahme aktiv?
+var accepting_orders: bool = true
+
+## --- Statistiken ---
+var stats := {
+	"days_simulated": 0,
+	"machines_installed": 0,
+	"machines_ordered": 0,
+	"orders_completed": 0,
+	"orders_rejected": 0,
+	"peak_utilization": 0.0,
+	"total_revenue": 0.0,
+	"total_costs": 0.0,
+}
+
+
+func _ready() -> void:
+	# Maschinenkatalog einlesen
+	for spec in MachineCatalog.all():
+		specs[spec.id] = spec
+	# Startbestand: ein Grundstock Material, damit die Produktion nach
+	# der ersten Investition anlaufen kann.
+	inventory_material = 0.0
+	material_inventory.clear()
+	intermediate_inventory.clear()
+	# Die Simulation startet pausiert. Der Spieler startet sie bewusst –
+	# und headless-Testläufe sollen nicht endlos ticken.
+	running = false
+	speed_index = 0
+	EventBus.simulation_speed_changed.emit(speed_index)
+	EventBus.economy_changed.emit(economy.to_dict())
+	# Der Startbetrieb: eine Anlage, die bereits steht und arbeitet.
+	#
+	# Ohne Startanlage waere das Spiel eine Sackgasse: Es gibt keine
+	# Produktion, damit keine Auftraege, damit keine Einnahmen und
+	# damit keine Investition. Der Spieler bekommt einen laufenden
+	# Betrieb, den er ausbauen oder durch eine bessere Anlage ersetzen
+	# kann.
+	_start_initial_machine()
+
+	_show_intro()
+
+
+## Zeigt die Einstiegsnachricht.
+##
+## Sie nennt die Reihenfolge der ersten Schritte, loest aber keine
+## Aufgabe. Sie erscheint beim Start und bei einem neuen Spiel – nicht
+## beim Laden eines Spielstands.
+func _show_intro() -> void:
+	EventBus.notify(
+		"Willkommen im Werk",
+		"Anlage A läuft und produziert. Kundenaufträge kommen von "
+		+ "selbst – sie verbrauchen deine Kapazität. Prüfe im "
+		+ "Investitionsmodul, ab welcher Menge die größere Anlage B "
+		+ "günstiger wird, und entscheide danach über einen "
+		+ "Rahmenvertrag.",
+		"info"
+	)
+
+
+## Richtet den Startbetrieb ein: eine Anlage A steht bereits im Betrieb.
+func _start_initial_machine() -> void:
+	var spec: MachineSpec = specs.get(MachineCatalog.CAR_A_ID)
+	if spec == null:
+		return
+	var instance := MachineInstance.new(spec, "anlage-start")
+	instance.state = MachineInstance.State.ACTIVE
+	instance.commissioned_year = year
+	instance.book_value = spec.acquisition_cost
+	var spot: Vector2i = grid.find_free_spot(FactoryGrid.Zone.PRODUCTION, 3, 3)
+	if spot.x >= 0:
+		instance.position = grid.cell_to_world(spot.x + 1, spot.y + 1)
+	machines[instance.instance_id] = instance
+	stats["machines_installed"] = 1
+	# Die Startanlage steht bereits im Anlagevermoegen. Sie wurde
+	# vorher gekauft und bezahlt – das Kapital ist gebunden.
+	economy.book_investment(spec.acquisition_cost)
+
+
+## Setzt die Simulation auf den Ausgangszustand zurueck.
+##
+## Wird fuer ein neues Spiel benoetigt. Die Startanlage wird neu
+## angelegt, die Wirtschaft auf 50.000 € zurueckgesetzt.
+func reset() -> void:
+	day = 0
+	year = 1
+	tick = 0
+	day_accumulator = 0.0
+	machines.clear()
+	orders.clear()
+	completed_orders.clear()
+	deliveries.clear()
+	material_deliveries.clear()
+	contracts.clear()
+	contract_sequence = 0
+	inventory_material = 0.0
+	material_inventory.clear()
+	intermediate_inventory.clear()
+	finished_goods = 0.0
+	loans.clear()
+	loan_sequence = 0
+	shares_outstanding = 1000.0
+	economy = EconomyState.new()
+	stats = {
+		"days_simulated": 0,
+		"machines_installed": 0,
+		"machines_ordered": 0,
+		"orders_completed": 0,
+		"orders_cancelled": 0,
+		"peak_utilization": 0.0,
+		"total_revenue": 0.0,
+		"total_costs": 0.0,
+	}
+	production_enabled = true
+	accepting_orders = true
+	running = false
+	speed_index = 0
+	_start_initial_machine()
+	_show_intro()
+	EventBus.simulation_speed_changed.emit(speed_index)
+	EventBus.economy_changed.emit(economy.to_dict())
+
+
+## Kauft Material auf dem Markt.
+##
+## Ohne diese Funktion koennte die Produktion nie anlaufen: Das Lager
+## waere leer, die Anlage stuende still und es gaebe keinen Weg, an
+## Material zu kommen.
+##
+## Der Preis ist der gewichtete Durchschnitt der Materialpreise aller
+## Anlagen mit Materialverbrauch – derselbe Preis, mit dem der
+## Lagerbestand bewertet wird. Es gibt keine Marge: der Rohstoffmarkt
+## ist ein perfekter Wettbewerb.
+##
+## Rückgabe: {ok, quantity, price, cost}
+func buy_material(quantity_kg: float, material_type: StringName = &"") -> Dictionary:
+	if quantity_kg <= 0.0:
+		return {"ok": false, "error": "Menge muss positiv sein."}
+
+	var price := material_price(material_type)
+	if price <= 0.0:
+		return {
+			"ok": false,
+			"error": "Materialpreis unbekannt – im Maschinenkatalog nachsehen.",
+		}
+
+	var cost := price * quantity_kg
+	if economy.cash < cost:
+		return {
+			"ok": false,
+			"error": "Nicht genug Kapital: %s € benötigt, %s € verfügbar." % [
+				_format_int(cost), _format_int(economy.cash)
+			],
+		}
+
+	economy.move_cash(-cost)
+	set_material_stock(material_type, material_stock(material_type) + quantity_kg)
+	stats["material_bought_kg"] = float(stats.get("material_bought_kg", 0.0)) + quantity_kg
+	stats["material_spend"] = float(stats.get("material_spend", 0.0)) + cost
+
+	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Material eingekauft",
+		"%s kg %s für %s € ins Lager aufgenommen." % [
+			_format(quantity_kg),
+			MachineCatalog.material_label(material_type),
+			_format_int(cost),
+		],
+		"success"
+	)
+	return {"ok": true, "quantity": quantity_kg, "price": price, "cost": cost}
+
+
+## Bestellt Material mit Lieferzeit.
+##
+## Die Zahlung erfolgt sofort, die Ware kommt aber erst nach der
+## Lieferzeit. Das ist der Unterschied zum Sofortkauf: der Betrieb
+## muss den Bestand planen, sonst laeuft die Produktion leer.
+##
+## `lead_time_days` von 0 bedeutet Sofortlieferung (wie `buy_material`).
+## Ohne Angabe wird die Standardlieferzeit des Materialmarkts
+## verwendet.
+func order_material(
+	quantity_kg: float, lead_time_days: int = -1, material_type: StringName = &""
+) -> Dictionary:
+	if quantity_kg <= 0.0:
+		return {"ok": false, "error": "Menge muss positiv sein."}
+
+	var price := material_price(material_type)
+	if price <= 0.0:
+		return {
+			"ok": false,
+			"error": "Materialpreis unbekannt – im Maschinenkatalog nachsehen.",
+		}
+
+	var cost := price * quantity_kg
+	if economy.cash < cost:
+		return {
+			"ok": false,
+			"error": "Nicht genug Kapital: %s € benötigt, %s € verfügbar." % [
+				_format_int(cost), _format_int(economy.cash)
+			],
+		}
+
+	var days := lead_time_days if lead_time_days >= 0 else MATERIAL_LEAD_TIME_DAYS
+	if days <= 0:
+		# Sofortlieferung: derselbe Weg wie der einfache Einkauf.
+		return buy_material(quantity_kg, material_type)
+
+	# Zahlung bei Bestellung, Ware kommt spaeter.
+	economy.move_cash(-cost)
+	stats["material_bought_kg"] = float(stats.get("material_bought_kg", 0.0)) + quantity_kg
+	stats["material_spend"] = float(stats.get("material_spend", 0.0)) + cost
+
+	var delivery := {
+		"quantity": quantity_kg,
+		"price": price,
+		"cost": cost,
+		"material_type": String(material_type),
+		"ordered_day": day,
+		"days_remaining": days,
+		"lead_time_days": days,
+		"status": "in_transit",
+	}
+	material_deliveries.append(delivery)
+	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Material bestellt",
+		"%s kg %s für %s € bestellt. Ankunft in %d Tagen – bis dahin muss "
+		% [
+			_format(quantity_kg),
+			MachineCatalog.material_label(material_type),
+			_format_int(cost),
+			days,
+		]
+		+ "der vorhandene Bestand reichen.",
+		"info"
+	)
+	return {"ok": true, "quantity": quantity_kg, "price": price, "cost": cost, "lead_time_days": days}
+
+
+## Der Bestand einer Materialart in kg.
+##
+## Materialarten ohne Typ fallen auf den Einheitsbestand zurueck.
+## Damit bleibt der einfache Fall (eine Materialart) unveraendert
+## funktionsfaehig.
+func material_stock(material_type: StringName) -> float:
+	if material_type == &"":
+		return inventory_material
+	return float(material_inventory.get(material_type, 0.0))
+
+
+## Der Gesamtbestand ueber alle Materialarten in kg.
+##
+## Fuer Kennzahlen, die das gesamte Lager betrachten (z. B. der
+## Betriebs-Lab-Schnappschuss). Enthaelt auch den untypisierten
+## Einheitsbestand.
+func total_material_stock() -> float:
+	var total := inventory_material
+	for material_type in material_inventory:
+		total += float(material_inventory[material_type])
+	return total
+
+
+## Setzt den Bestand einer Materialart.
+func set_material_stock(material_type: StringName, quantity_kg: float) -> void:
+	if material_type == &"":
+		inventory_material = maxf(0.0, quantity_kg)
+	else:
+		material_inventory[material_type] = maxf(0.0, quantity_kg)
+	_revalue_inventory()
+
+
+## Der Bestand eines Zwischenprodukts (Stückzahl).
+func intermediate_stock(product: StringName) -> float:
+	if product == &"":
+		return 0.0
+	return float(intermediate_inventory.get(product, 0.0))
+
+
+## Setzt den Bestand eines Zwischenprodukts.
+func set_intermediate_stock(product: StringName, quantity: float) -> void:
+	if product == &"":
+		return
+	intermediate_inventory[product] = maxf(0.0, quantity)
+	_revalue_inventory()
+
+
+## Die Zwischenprodukte, die im Betrieb eine Rolle spielen.
+##
+## Das sind alle Produkte, die eine Anlage herstellt (und damit eine
+## Folgestufe beliefern kann) und alle Produkte, die eine Anlage
+## braucht (und damit von einer Vorstufe beliefert werden).
+func intermediate_products() -> Array[StringName]:
+	var products: Array[StringName] = []
+	for spec in specs.values():
+		var s: MachineSpec = spec
+		if s.output_product != &"" and not products.has(s.output_product):
+			products.append(s.output_product)
+		if s.input_product != &"" and not products.has(s.input_product):
+			products.append(s.input_product)
+	return products
+
+
+## Der Kapitalwert einer Produktionskette.
+##
+## Wird die Endstufe einzeln bewertet, fehlt die Vorstufe: Ihre
+## Anschaffung, ihre variablen Kosten und ihre Fixkosten gehoeren
+## aber zur selben Investitionsentscheidung. Deshalb wird die Kette
+## gemeinsam gerechnet:
+##
+##   KW_Kette = -|A0_Endstufe + A0_Vorstufen|
+##              + Summe Cashflow_Kette / (1+i)^t
+##              + Restwerte am Ende des Planungshorizonts
+##
+## Der Jahres-Cashflow der Kette ist zahlungswirksam gerechnet:
+##
+##   Cashflow = DB_Kette x Engpassmenge
+##              - zahlungswirksame Fixkosten beider Stufen
+##
+## Abschreibung und kalkulatorische Zinsen tauchen hier bewusst
+## NICHT auf: Der Ketten-Deckungsbeitrag enthaelt nur variable
+## Kosten, abgezogen werden nur die zahlungswirksamen
+## Betriebsfixkosten. Damit gilt dieselbe Identitaet wie bei der
+## Einzelanlage (Cashflow = DB x Menge - zahlungswirksame Fixkosten,
+## vgl. MachineSpec.annual_cashflow_at: Gewinn + AfA + kalk. Zinsen
+## kuerzt sich genau auf diesen Ausdruck).
+##
+## Die Menge ist die Engpassmenge: Die Kette produziert nur so
+## viel, wie die schwaechste Stufe hergibt (Vorstufenkapazitaet
+## geteilt durch den Einsatzfaktor, gedeckelt von der Endstufe).
+##
+## Planungshorizont ist die Nutzungsdauer der Endstufe. Vorstufen,
+## die laenger laufen, gehen mit ihrem Restbuchwert am Horizont ein;
+## Vorstufen, die kuerzer laufen, mit ihrem Restwert.
+func chain_net_present_value(
+	end_stage: MachineInstance, discount_rate: float
+) -> float:
+	var producers := _chain_producers_of(end_stage)
+	var spec := end_stage.spec
+	var total_investment := spec.acquisition_cost
+	for p in producers:
+		total_investment += p.spec.acquisition_cost
+
+	# Engpassmenge der Kette: die Endstufe kann nur verarbeiten,
+	# was die Vorstufen liefern.
+	var output := spec.capacity_units_per_year
+	if spec.input_product != &"" and spec.input_product_per_unit > 0.0:
+		var supply := 0.0
+		for p in producers:
+			supply += p.spec.capacity_units_per_year
+		output = minf(output, supply / spec.input_product_per_unit)
+
+	var db := _chain_contribution_margin(spec)
+	var fixed_cash := spec.cash_fixed_costs()
+	for p in producers:
+		fixed_cash += p.spec.cash_fixed_costs()
+	var cashflow := db * output - fixed_cash
+
+	var horizon := spec.useful_life_years
+	var kw := -absf(total_investment)
+	for t in range(1, horizon + 1):
+		kw += cashflow / pow(1.0 + discount_rate, float(t))
+	# Restwerte am Ende des Planungshorizonts: die Endstufe mit
+	# ihrem Restwert, jede Vorstufe mit ihrem Restbuchwert (linear;
+	# ist ihre Nutzungsdauer kuerzer, bleibt genau der Restwert).
+	var terminal := spec.residual_value
+	for p in producers:
+		var producer: MachineInstance = p
+		terminal += producer.book_value_after(horizon)
+	kw += terminal / pow(1.0 + discount_rate, float(horizon))
+	return kw
+
+
+## Die Vorstufen, die eine Endstufe beliefern.
+func _chain_producers_of(end_stage: MachineInstance) -> Array[MachineInstance]:
+	var result: Array[MachineInstance] = []
+	if end_stage.spec.input_product == &"":
+		return result
+	for instance in producers_of(end_stage.spec.input_product):
+		result.append(instance)
+	return result
+
+
+## Die Anlagen, die ein Zwischenprodukt herstellen.
+func producers_of(product: StringName) -> Array[MachineInstance]:
+	var result: Array[MachineInstance] = []
+	if product == &"":
+		return result
+	for instance in active_machines():
+		if instance.spec.output_product == product:
+			result.append(instance)
+	return result
+
+
+## Die Materialarten, die aktuell gebraucht werden.
+##
+## Nur die tatsaechlich benoetigten Arten werden angezeigt und
+## bestellt. Das haelt die Oberflaeche auf das Wesentliche.
+func required_material_types() -> Array[StringName]:
+	var types: Array[StringName] = []
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		var mt := m.spec.material_type
+		if mt == &"" or m.spec.material_per_unit <= 0.0:
+			continue
+		if not types.has(mt):
+			types.append(mt)
+	# Auch bestelltes Material gehoert in die Liste, sonst waere eine
+	# laufende Lieferung unsichtbar.
+	for delivery in material_deliveries:
+		var mt := StringName(delivery.get("material_type", ""))
+		if mt != &"" and not types.has(mt):
+			types.append(mt)
+	return types
+
+
+## Der Tagesbedarf einer Materialart (kg).
+func daily_material_need(material_type: StringName = &"") -> float:
+	var daily_need := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		if material_type != &"" and m.spec.material_type != material_type:
+			continue
+		daily_need += m.spec.material_per_unit * m.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+	return daily_need
+
+
+## Die Reichweite einer Materialart in Tagen.
+func material_coverage_days(material_type: StringName = &"") -> float:
+	var need := daily_material_need(material_type)
+	if need <= 0.0:
+		return INF
+	return material_stock(material_type) / need
+
+
+## Der Preis einer Materialart (€/kg).
+##
+## Der Preis ergibt sich aus den Anlagen, die diese Art verbrauchen.
+## Für Anlagen ohne Typ gilt der bisherige Durchschnitt.
+func material_price(material_type: StringName = &"") -> float:
+	if material_type != &"":
+		var weighted := 0.0
+		var weight := 0.0
+		var running: Array[MachineInstance] = active_machines()
+		for m in running:
+			if m.spec.material_type != material_type:
+				continue
+			var per_unit := m.spec.material_per_unit
+			if per_unit <= 0.0:
+				continue
+			weighted += m.spec.material_price_per_kg * per_unit
+			weight += per_unit
+		if weight > 0.0:
+			return weighted / weight
+		return 0.0
+	return _average_material_price()
+
+
+## Das auf dem Weg befindliche Material einer Art (kg).
+func material_in_transit(material_type: StringName = &"") -> float:
+	var total := 0.0
+	for delivery in material_deliveries:
+		var mt := StringName(delivery.get("material_type", ""))
+		if material_type != &"" and mt != material_type:
+			continue
+		total += float(delivery.get("quantity", 0.0))
+	return total
+
+
+## Bewertet den gesamten Lagerbestand neu.
+func _revalue_inventory() -> void:
+	var total := 0.0
+	for material_type in material_inventory:
+		total += float(material_inventory[material_type]) * material_price(StringName(material_type))
+	total += inventory_material * _average_material_price()
+	# Zwischenprodukte sind gebundenes Kapital. Bewertet werden sie
+	# mit den Herstellkosten der Vorstufe: Das ist der Wert, den das
+	# Lager wirtschaftlich darstellt. Ein fertiges Endprodukt im
+	# Lager waere noch nicht verdient, also wird es nicht bewertet.
+	for product in intermediate_inventory:
+		total += float(intermediate_inventory[product]) * _intermediate_unit_cost(StringName(product))
+	economy.inventory_value = total
+
+
+## Die Herstellkosten je Einheit eines Zwischenprodukts.
+##
+## Grundlage sind die vollstaendigen variablen Kosten der Vorstufe
+## (eigene Stueckkosten + Material) zuzueglich der anteiligen
+## Fixkosten. Das ist der kalkulatorische Wert des Zwischenlagers.
+func _intermediate_unit_cost(product: StringName) -> float:
+	var producers := producers_of(product)
+	if producers.is_empty():
+		return 0.0
+	var unit_cost := 0.0
+	var capacity := 0.0
+	for instance in producers:
+		var spec := instance.spec
+		var variable := spec.full_variable_cost_per_unit()
+		# Fixkosten anteilig auf die Kapazitaet verteilen.
+		var per_unit_fixed := 0.0
+		if spec.capacity_units_per_year > 0.0:
+			per_unit_fixed = spec.fixed_operating_costs / spec.capacity_units_per_year
+		unit_cost += (variable + per_unit_fixed) * spec.capacity_units_per_year
+		capacity += spec.capacity_units_per_year
+	if capacity <= 0.0:
+		return 0.0
+	return unit_cost / capacity
+
+
+## Schliesst einen Rahmenvertrag mit einem Kunden.
+##
+## Der Vertrag sichert eine Mindestmenge pro Jahr zu einem festen
+## Preis ab. Der Spieler bindet sich damit an die Nachfrage – aber
+## auch an den Preis. Ein Vertrag unter dem Deckungsbeitrag ist
+## ein Fehler, das wird abgelehnt.
+##
+## Die Dauer wird in Jahren angegeben.
+func sign_contract(
+	quantity_per_year: float, price_per_unit: float, years: int
+) -> Dictionary:
+	if quantity_per_year <= 0.0:
+		return {"ok": false, "error": "Die Mindestmenge muss positiv sein."}
+	if years <= 0:
+		return {"ok": false, "error": "Die Vertragsdauer muss mindestens ein Jahr betragen."}
+
+	# Der Preis muss mindestens die variablen Stueckkosten decken.
+	# Darunter verliert das Unternehmen bares Geld an jedem Stueck –
+	# ein solcher Vertrag wird abgelehnt. Preise zwischen den
+	# variablen Kosten und dem ueblichen Deckungsbeitrag sind
+	# dagegen zulaessig: Nach der Deckungsbeitragsrechnung traegt
+	# jeder Euro ueber den variablen Kosten zu den Fixkosten bei.
+	# Ob das strategisch klug ist, bewertet der Berater.
+	var floor_cost := _weighted_unit_variable_cost()
+	if floor_cost > 0.0 and price_per_unit < floor_cost:
+		return {
+			"ok": false,
+			"error": "Der Preis liegt unter den variablen Stückkosten von %s €. Das wäre ein Verlust auf jedem Stück." % _format_int(floor_cost),
+		}
+
+	# Der Vertrag darf nicht mehr versprechen als die
+	# Absatzkapazitaet hergibt – sonst ist er von Anfang an
+	# unerfuellbar. Vorstufen zaehlen nicht mit: Sie verkaufen
+	# nichts an den Markt.
+	var capacity := _sales_capacity()
+	if capacity > 0.0 and quantity_per_year > capacity * 1.5:
+		return {
+			"ok": false,
+			"error": "Die Mindestmenge von %s Stueck liegt ueber der Kapazitaet von %s Stueck." % [
+				_format_int(quantity_per_year), _format_int(capacity)
+			],
+		}
+
+	contract_sequence += 1
+	var contract := {
+		"id": "vertrag-%d-%d" % [day, contract_sequence],
+		"customer": "Rahmenvertrag %d" % (1 + day % 5),
+		"quantity_per_year": quantity_per_year,
+		"price_per_unit": price_per_unit,
+		"years": years,
+		"years_remaining": years,
+		"signed_day": day,
+		"delivered_this_year": 0.0,
+		"revenue_per_year": quantity_per_year * price_per_unit,
+	}
+	contracts.append(contract)
+	EventBus.notify(
+		"Vertrag geschlossen",
+		"%s: %s Stueck p.a. zu %s €, Laufzeit %d Jahre." % [
+			contract["customer"],
+			_format_int(quantity_per_year),
+			_format_int(price_per_unit),
+			years,
+		],
+		"success"
+	)
+	return {"ok": true, "contract": contract}
+
+
+## Loest einen Rahmenvertrag auf.
+##
+## Eine Kuendigung vor Laufzeitende kostet eine Gebuehr. Das macht
+## die Entscheidung gegenlaeufig: Wer zu frueh kuendigt, zahlt.
+func terminate_contract(contract_id: String) -> Dictionary:
+	# `contracts` ist ein Array, kein Dictionary. Ein `get()` waere
+	# hier ein Indexzugriff und wuerde einen String erwarten. Gesucht
+	# wird deshalb ueber den Index.
+	var contract: Dictionary = {}
+	var found := false
+	for entry in contracts:
+		var candidate: Dictionary = entry
+		if String(candidate.get("id", "")) == contract_id:
+			contract = candidate
+			found = true
+			break
+	if not found:
+		return {"ok": false, "error": "Vertrag nicht gefunden."}
+
+	var fee: float = float(contract.get("revenue_per_year", 0.0)) * 0.10
+	if fee > 0.0 and economy.cash < fee:
+		return {
+			"ok": false,
+			"error": "Die Kuendigungsgebuehr von %s € kann nicht bezahlt werden." % _format_int(fee),
+		}
+	if fee > 0.0:
+		economy.move_cash(-fee)
+	# Wichtig: das Vertrags-Dictionary entfernen, nicht die ID.
+	# `erase(contract_id)` waere ein stilles No-op - der Spieler
+	# zahlt die Gebuehr und der Vertrag bleibt trotzdem bestehen.
+	contracts.erase(contract)
+	EventBus.notify(
+		"Vertrag gekuendigt",
+		"Die Kuendigungsgebuehr betraegt %s €." % _format_int(fee),
+		"warning"
+	)
+	return {"ok": true, "fee": fee}
+
+
+## Die Summe aller noch laufenden Vertragsmengen p.a.
+func contracted_quantity() -> float:
+	var total := 0.0
+	for contract in contracts:
+		total += float(contract.get("quantity_per_year", 0.0))
+	return total
+
+
+## Die gesicherte Nachfrage aus Verträgen (Deckungsbeitrag p.a.).
+##
+## Deckungsbeitrag je Stueck = Vertragspreis minus variable
+## Stueckkosten. Der fruehere Abzug des Deckungsbeitrags vom Preis
+## war ein Kategorienfehler: Ein Preis wird mit Kosten verglichen,
+## nicht mit einer anderen Marge.
+func contracted_margin() -> float:
+	var unit_cost := _weighted_unit_variable_cost()
+	var total := 0.0
+	for contract in contracts:
+		total += float(contract.get("quantity_per_year", 0.0)) * (
+			float(contract.get("price_per_unit", 0.0)) - unit_cost
+		)
+	return total
+
+
+## Die gesamte Kapazität der betriebsbereiten Anlagen.
+func _total_capacity() -> float:
+	var capacity := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		capacity += m.spec.capacity_units_per_year
+	return capacity
+
+
+## Die Absatzkapazität: nur Endstufen verkaufen an den Markt.
+##
+## Eine Vorstufe stellt Zwischenprodukte her – ihre Kapazität darf
+## bei Verträgen über Endprodukte nicht mitzählen, sonst verspricht
+## das Unternehmen Mengen, die es nie liefern kann.
+func _sales_capacity() -> float:
+	var capacity := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		if m.spec.is_intermediate_stage():
+			continue
+		capacity += m.spec.capacity_units_per_year
+	return capacity
+
+
+## Der kapazitätsgewichtete Deckungsbeitrag je Stück.
+func _weighted_contribution_margin() -> float:
+	var capacity := 0.0
+	var weighted := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		# Vorstufen erzeugen kein Endprodukt. Ihr Deckungsbeitrag
+		# fliesst ueber die Zwischenproduktkosten in die Endstufe ein
+		# und darf nicht doppelt gezaehlt werden.
+		if m.spec.is_intermediate_stage():
+			continue
+		var cap := m.spec.capacity_units_per_year
+		capacity += cap
+		weighted += _chain_contribution_margin(m.spec) * cap
+	if capacity <= 0.0:
+		return 0.0
+	return weighted / capacity
+
+
+## Der Deckungsbeitrag je Endprodukt-Einheit einer ganzen Kette.
+##
+## Bei einer einstufigen Anlage ist das der volle Deckungsbeitrag
+## (Marktpreis minus variable Kosten inkl. Material). Bei einer
+## Kette kommen die variablen Kosten der Vorstufe hinzu:
+##
+##   DB_Kette = Marktpreis der Endstufe
+##              - variable Kosten der Kette je Endprodukt-Einheit
+##
+## Der interne Verrechnungspreis der Vorstufe kuerzt sich innerhalb
+## der Kette heraus: Was die Endstufe "zahlt", "verdient" die
+## Vorstufe – ein reiner Durchlaufposten, der den Kettenbeitrag
+## nicht veraendern darf.
+##
+## Fixkosten gehoeren NICHT in den Deckungsbeitrag. Sie werden
+## dort abgezogen, wo absolut gerechnet wird (Kapitalwert,
+## Break-even) – sonst wuerden sie doppelt gezaehlt.
+func _chain_contribution_margin(spec: MachineSpec) -> float:
+	return spec.price_per_unit - _chain_variable_cost(spec)
+
+
+## Die variablen Kosten je Endprodukt-Einheit einer Kette.
+##
+## Eigene variable Kosten der Stufe (inkl. Material) plus die
+## kapazitaetsgewichteten variablen Kosten der Vorstufen je
+## benoetigter Zwischenprodukt-Einheit.
+func _chain_variable_cost(spec: MachineSpec) -> float:
+	var variable := spec.full_variable_cost_per_unit()
+	if spec.input_product == &"":
+		return variable
+	var producer_cost := 0.0
+	var producer_capacity := 0.0
+	for instance in producers_of(spec.input_product):
+		var p := instance.spec
+		producer_cost += p.full_variable_cost_per_unit() * p.capacity_units_per_year
+		producer_capacity += p.capacity_units_per_year
+	if producer_capacity > 0.0:
+		producer_cost /= producer_capacity
+	return variable + producer_cost * spec.input_product_per_unit
+
+
+## Kapazitaetsgewichtete variable Kosten je Endprodukt-Einheit
+## ueber alle betriebsbereiten Endstufen.
+##
+## Das ist die Preisuntergrenze der Deckungsbeitragsrechnung:
+## Jeder Preis darueber traegt zu den Fixkosten bei, jeder Preis
+## darunter ist ein Verlust auf jedem Stueck.
+func _weighted_unit_variable_cost() -> float:
+	var capacity := 0.0
+	var weighted := 0.0
+	var running: Array[MachineInstance] = active_machines()
+	for m in running:
+		if m.spec.is_intermediate_stage():
+			continue
+		var cap := m.spec.capacity_units_per_year
+		capacity += cap
+		weighted += _chain_variable_cost(m.spec) * cap
+	if capacity <= 0.0:
+		return 0.0
+	return weighted / capacity
+
+
+## Schreibt die laufenden Materiallieferungen weiter.
+##
+## Ist die Lieferzeit abgelaufen, geht die Ware ins Lager und der
+## Bestand wird bewertet.
+func _progress_material_deliveries() -> void:
+	if material_deliveries.is_empty():
+		return
+	var still_open: Array = []
+	for delivery in material_deliveries:
+		var days_left := int(delivery.get("days_remaining", 0)) - 1
+		if days_left > 0:
+			delivery["days_remaining"] = days_left
+			still_open.append(delivery)
+			continue
+		# Die Ware ist angekommen.
+		var quantity := float(delivery.get("quantity", 0.0))
+		var material_type := StringName(delivery.get("material_type", ""))
+		set_material_stock(
+			material_type, material_stock(material_type) + quantity
+		)
+		EventBus.notify(
+			"Material angekommen",
+			"%s kg %s sind im Lager eingetroffen." % [
+				_format(quantity), MachineCatalog.material_label(material_type)
+			],
+			"success"
+		)
+	material_deliveries = still_open
+
+
+# ==================================================================
+# Zeitsteuerung
+# ==================================================================
+
+func _process(delta: float) -> void:
+	if not running or speed_index <= 0:
+		return
+	days_per_second = SPEEDS[speed_index]
+	day_accumulator += delta * days_per_second
+	while day_accumulator >= 1.0:
+		day_accumulator -= 1.0
+		advance_day()
+
+
+func set_speed(index: int) -> void:
+	speed_index = clampi(index, 0, SPEEDS.size() - 1)
+	running = speed_index > 0
+	EventBus.simulation_speed_changed.emit(speed_index)
+	EventBus.simulation_paused_changed.emit(not running)
+
+
+func toggle_pause() -> void:
+	if speed_index == 0:
+		set_speed(1)
+	else:
+		set_speed(0)
+
+
+# ==================================================================
+# Tagesablauf
+# ==================================================================
+
+## Führt einen Simulationstag aus. Öffentlich, damit Tests deterministisch
+## einen ganzen Tag Schritt für Schritt simulieren können.
+func advance_day() -> void:
+	day += 1
+	tick += 1
+	stats["days_simulated"] = int(stats["days_simulated"]) + 1
+
+	_progress_deliveries()
+	_progress_material_deliveries()
+	_progress_production()
+	_process_customer_orders()
+	_generate_demand()
+	_book_monthly_fixed_costs()
+
+	if day % DAYS_PER_YEAR == 0:
+		_close_business_year()
+		year += 1
+		day = 0
+
+	EventBus.simulation_ticked.emit(day, tick)
+	EventBus.economy_changed.emit(economy.to_dict())
+
+
+## Die laufenden Fixkosten monatlich abbuchen.
+##
+## Die Fixkosten (Personal, Wartung, Verwaltung) fallen laufend an –
+## nicht erst am Jahresende. Fuer die Liquiditaetsanzeige wird deshalb
+## jeden Monat ein Zwölftel der Jahresfixkosten von der Kasse
+## abgezogen.
+##
+## Der Aufwand selbst wird im Jahresabschluss erfasst, damit die
+## Jahresrechnung vollstaendig ist. Diese Funktion ist reine
+## Zahlungswirkung und darf den Aufwand nicht doppelt buchen.
+func _book_monthly_fixed_costs() -> void:
+	if day == 0 or day % DAYS_PER_MONTH != 0:
+		return
+	var monthly: float = monthly_fixed_costs()
+	if monthly <= 0.0:
+		return
+	economy.move_cash(-monthly)
+
+
+## Lieferungen: Bestellung → Transport → Ladezone → Entladen → Montage → Betrieb.
+##
+## Die Logik folgt ausschliesslich dem Zustand der Maschine. Jeder
+## Uebergang wird von `MachineInstance.advance_state()` ausgefuehrt und
+## ist dort fachlich begruendet. Dadurch kann kein Zustand uebersprungen
+## werden – insbesondere beginnt der Transport nicht erst dann, wenn
+## die Maschine schon da ist.
+func _progress_deliveries() -> void:
+	var still_open: Array = []
+	for delivery in deliveries:
+		var instance: MachineInstance = machines.get(delivery["instance_id"])
+		if instance == null:
+			continue
+
+		# ORDERED: Das LKW startet am Folgetag. Die Bestellung selbst
+		# ist bereits am Vortag erfasst worden.
+		if instance.state == MachineInstance.State.ORDERED:
+			instance.advance_state()
+			delivery["phase"] = "transport"
+			delivery["days_remaining"] = instance.days_remaining
+			EventBus.delivery_ordered.emit(delivery)
+			EventBus.notify(
+				"Lieferung unterwegs",
+				"%s verlässt das Werk. Ankunft in %d Tagen." % [
+					instance.spec.display_name, instance.days_remaining
+				],
+				"info"
+			)
+			still_open.append(delivery)
+			continue
+
+		instance.days_remaining -= 1
+		delivery["days_remaining"] = instance.days_remaining
+
+		if instance.days_remaining > 0:
+			still_open.append(delivery)
+			continue
+
+		# Der aktuelle Zustand ist abgeschlossen: einen Schritt weiter.
+		match instance.state:
+			MachineInstance.State.IN_TRANSIT:
+				instance.advance_state()
+				delivery["phase"] = "arrived"
+				EventBus.delivery_arrived.emit(delivery)
+				EventBus.notify(
+					"Anlieferung eingetroffen",
+					"%s steht an der Ladezone und wird entladen." % instance.spec.display_name,
+					"info"
+				)
+			MachineInstance.State.ARRIVED:
+				instance.advance_state()
+				delivery["phase"] = "unloading"
+			MachineInstance.State.UNLOADING:
+				instance.advance_state()
+				delivery["phase"] = "installing"
+			MachineInstance.State.INSTALLING:
+				instance.advance_state()
+				instance.commissioned_year = year
+				instance.age_years = 0
+				instance.book_value = instance.spec.acquisition_cost
+				instance.accumulated_depreciation = 0.0
+				instance.days_remaining = 0
+				delivery["phase"] = "installed"
+				stats["machines_installed"] = int(stats["machines_installed"]) + 1
+				EventBus.delivery_installed.emit(delivery)
+				EventBus.notify(
+					"Maschine in Betrieb",
+					"%s ist installiert. Die Kapazität steht bereit." % instance.spec.display_name,
+					"success"
+				)
+			_:
+				pass
+
+		if instance.state != MachineInstance.State.ACTIVE:
+			still_open.append(delivery)
+
+	deliveries = still_open
+
+
+## Durchschnittlicher Materialpreis je Kilogramm.
+##
+## Der Materialpreis ist an die jeweilige Maschine gebunden. Fuer die
+## Lagerbewertung (Bestandsvermögen) wird der gewichtete Durchschnitt
+## ueber alle Maschinen mit Materialverbrauch gebildet. Maschinen ohne
+## Materialverbrauch gehen nicht in die Mittelung ein – sonst wuerde
+## der Preis gegen Null sinken.
+func _average_material_price() -> float:
+	var weighted := 0.0
+	var weight := 0.0
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		var per_unit := instance.spec.material_per_unit
+		if per_unit <= 0.0:
+			continue
+		weighted += instance.spec.material_price_per_kg * per_unit
+		weight += per_unit
+	if weight <= 0.0:
+		return 0.0
+	return weighted / weight
+
+
+## Produktion: Auslastung, Materialverbrauch, Kosten.
+func _progress_production() -> void:
+	if not production_enabled:
+		return
+	# Produziert wird fuer die Nachfrage, nicht ins Blaue: Jede
+	# Endstufe fertigt nur, was offene Auftraege noch brauchen und
+	# der Fertigwarenbestand nicht schon deckt. Eine Anlage ohne
+	# Auftraege steht still – und verursacht dann auch keine
+	# variablen Kosten. Genau das ist der Unterschied zwischen
+	# Fixkosten (laufen immer) und variablen Kosten (laufen mit der
+	# Menge): Auslastung wird zur echten wirtschaftlichen Groesse.
+	var backlog := 0.0
+	for order in orders:
+		if String(order.get("status", "")) != "accepted":
+			continue
+		backlog += maxf(
+			0.0,
+			float(order.get("quantity", 0.0)) - float(order.get("produced", 0.0))
+		)
+	backlog = maxf(0.0, backlog - finished_goods)
+
+	# Tagesziele der Endstufen: der offene Bedarf wird in
+	# Maschinenreihenfolge verteilt, gedeckelt von der jeweiligen
+	# Tageskapazitaet. Aus den Zielen der Endstufen ergibt sich der
+	# heutige Zwischenproduktbedarf der Vorstufen.
+	var end_targets: Dictionary = {}
+	var input_need: Dictionary = {}
+	var remaining := backlog
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if not instance.is_operational():
+			continue
+		if instance.spec.is_intermediate_stage():
+			continue
+		var daily_cap := instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+		var target := minf(daily_cap, remaining)
+		remaining -= target
+		end_targets[instance_id] = target
+		var product := instance.spec.input_product
+		if product != &"" and target > 0.0:
+			input_need[product] = (
+				float(input_need.get(product, 0.0))
+				+ target * instance.spec.input_product_per_unit
+			)
+
+	# Das Zwischenlager deckt einen Teil des heutigen Bedarfs: Nur
+	# der Rest muss heute von den Vorstufen gefertigt werden.
+	for product in input_need:
+		input_need[product] = maxf(
+			0.0,
+			float(input_need[product]) - intermediate_stock(StringName(product))
+		)
+
+	# Die Produktionskette laeuft stufenweise: zuerst die Vorstufen
+	# (sie legen ihr Zwischenprodukt ins Lager), danach die Folgestufen
+	# (sie entnehmen es wieder). Dadurch kann die Endstufe an einem
+	# Tag noch das nutzen, was die Vorstufe am selben Tag hergestellt
+	# hat – und eine schwache Vorstufe bremst die Endstufe sichtbar.
+	#
+	# Vorstufen fertigen bedarfsgerecht: nur so viel, wie den
+	# Endstufen heute fehlt (Bedarf minus Zwischenlager). Das haelt
+	# das Zwischenlager klein – Kapital wird nicht in Bestaenden
+	# vergraben, die niemand abruft.
+	for stage in 2:
+		for instance_id in machines:
+			var instance: MachineInstance = machines[instance_id]
+			if not instance.is_operational():
+				continue
+			# Stufe 0: Vorstufen (verbrauchen Rohmaterial, liefern
+			# Zwischenprodukt). Stufe 1: Endstufen (verbrauchen das
+			# Zwischenprodukt oder Rohmaterial).
+			var is_final := instance.spec.is_final_stage()
+			if (stage == 0) == is_final:
+				continue
+			var target := 0.0
+			if instance.spec.is_intermediate_stage():
+				var product := instance.spec.output_product
+				var open_need := float(input_need.get(product, 0.0))
+				var daily_cap := instance.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+				target = minf(daily_cap, open_need)
+				input_need[product] = maxf(0.0, open_need - target)
+			else:
+				target = float(end_targets.get(instance_id, 0.0))
+			_produce_one_day(instance, target)
+
+
+## Die Tagesproduktion einer einzelnen Anlage.
+##
+## Deckelung durch Material (Rohstoff) und durch das Zwischenprodukt
+## der Vorstufe. Fehlt eine dieser Grundlagen, laeuft die Anlage im
+## Leerlauf – mit Vermerk im Maschinenprotokoll.
+func _produce_one_day(instance: MachineInstance, target_units: float) -> void:
+	# Ohne Bedarf keine Produktion: Die Anlage steht still. Das ist
+	# kein Stoerfall und wird nicht protokolliert – fehlende
+	# Nachfrage sieht der Spieler an der Auslastung.
+	if target_units <= 0.0:
+		return
+
+	# 1) Rohstoff der Stufe
+	var material_type := instance.spec.consumed_material_type()
+	var material_needed := target_units * instance.spec.material_per_unit
+	var material_available := true
+	if material_needed > 0.0:
+		# Jede Anlage verbraucht ihre eigene Materialart. Ein
+		# Bestand ersetzt keinen anderen: Wer Stahl hat, kann keine
+		# Verpackung produzieren.
+		var stock := material_stock(material_type)
+		material_available = stock >= material_needed
+		if material_available:
+			set_material_stock(material_type, stock - material_needed)
+
+	if not material_available:
+		# Materialengpass -> Maschine läuft im Leerlauf
+		instance.notes.append(
+			"Tag %d: Materialengpass (%s) – Anlage im Leerlauf." % [
+				day, MachineCatalog.material_label(material_type)
+			]
+		)
+		return
+
+	# 2) Zwischenprodukt der Vorstufe
+	var input_product := instance.spec.input_product
+	var input_needed := target_units * instance.spec.input_product_per_unit
+	var input_available := true
+	if input_product != &"" and input_needed > 0.0:
+		var in_stock := intermediate_stock(input_product)
+		input_available = in_stock >= input_needed
+		if input_available:
+			set_intermediate_stock(input_product, in_stock - input_needed)
+
+	if not input_available:
+		# Die Vorstufe liefert nicht genug -> Endstufe im Leerlauf.
+		instance.notes.append(
+			"Tag %d: Vorstufe liefert zu wenig %s – Anlage im Leerlauf." % [
+				day, String(input_product)
+			]
+		)
+		return
+
+	# 3) Produktion und Weiterleitung
+	instance.quantity_this_year += target_units
+	instance.maintenance_cost += instance.spec.fixed_operating_costs / float(DAYS_PER_YEAR)
+
+	# Variable Fertigungskosten sind zahlungswirksam: Energie,
+	# Hilfsstoffe, Akkordloehne fallen mit jedem gefertigten Stueck
+	# an. Das Material ist hier NICHT enthalten – es wurde beim
+	# Einkauf bezahlt und wird beim Verbrauch als Aufwand erfasst.
+	# Der Aufwand der variablen Kosten wird im Jahresabschluss
+	# gebucht (variable_costs_year), hier nur die Zahlung.
+	var variable_cash := target_units * instance.spec.variable_cost_per_unit
+	if variable_cash > 0.0:
+		economy.move_cash(-variable_cash)
+
+	# Eine Vorstufe legt ihr Erzeugnis im Zwischenlager ab. Es wird
+	# nicht bewertet wie ein Endprodukt – der Wert steckt in der
+	# Folgestufe, die es weiterverarbeitet. Eine Endstufe legt ihre
+	# Ware in den Fertigwarenbestand, aus dem die Auftraege
+	# ausgeliefert werden.
+	var output_product := instance.spec.output_product
+	if output_product != &"":
+		set_intermediate_stock(output_product, intermediate_stock(output_product) + target_units)
+	else:
+		finished_goods += target_units
+
+	var utilization := instance.spec.utilization_at(instance.quantity_this_year)
+	stats["peak_utilization"] = maxf(float(stats["peak_utilization"]), utilization)
+
+
+## Kundenaufträge: Annahme, Produktion, Lieferung, Zahlung.
+##
+## Ein Auftrag wird ausschliesslich erfuellt, wenn die geforderte Menge
+## tatsaechlich produziert wurde. Die Produktion wird aus den Maschinen
+## heraus an die Auftraege verteilt: jede Einheit wird nur einmal
+## vergeben. Ohne diese Kopplung wuerde ein Auftrag allein an der
+## vorhandenen Kapazitaet erfuellt, ohne dass etwas hergestellt wurde.
+func _process_customer_orders() -> void:
+	if not accepting_orders:
+		return
+
+	# Ausgeliefert wird NUR, was tatsaechlich gefertigt wurde: der
+	# Fertigwarenbestand. Frueher wurde hier die theoretische
+	# Kapazitaet verteilt – dann floss Umsatz, obwohl die Maschinen
+	# wegen Materialmangel stillstanden. Ware ohne Produktion gibt
+	# es nicht.
+	var daily_production := finished_goods
+
+	# Forderungen einziehen, deren Zahlungsziel erreicht ist.
+	_collect_receivables()
+
+	# Nachfrage folgt einer deterministischen Kurve (Saisonalitaet + Wachstum)
+	# Kein Zufall: der Spielstand bleibt reproduzierbar.
+	for order in orders:
+		if order["status"] != "accepted":
+			continue
+		# Fortschritt in Tagen
+		order["progress_days"] = int(order["progress_days"]) + 1
+
+		var required := float(order["quantity"])
+		var produced_for_order := float(order.get("produced", 0.0))
+
+		# Nur solange die Lieferfrist nicht abgelaufen ist, wird
+		# produziert. Danach kann der Auftrag nicht mehr erfuellt
+		# werden und wird storniert.
+		if order["progress_days"] > int(order["lead_time_days"]):
+			order["status"] = "cancelled"
+			order["cancelled_day"] = day
+			stats["orders_cancelled"] = int(stats.get("orders_cancelled", 0)) + 1
+			# Die fuer diesen Auftrag gefertigten Stuecke fallen in
+			# den Fertigwarenbestand zurueck und bedienen den
+			# naechsten Auftrag. Gefertigte Ware verschwindet nicht,
+			# nur weil ein Kunde abspringt.
+			daily_production += produced_for_order
+			EventBus.notify(
+				"Auftrag nicht erfüllbar",
+				"Die Lieferfrist für %s Stück ist verstrichen. Der Auftrag wurde storniert." % _format(required),
+				"warning"
+			)
+			continue
+
+		# Produktion auf den Auftrag anrechnen.
+		var still_needed := required - produced_for_order
+		if still_needed > 0.0 and daily_production > 0.0:
+			var allocatable: float = minf(still_needed, daily_production)
+			produced_for_order += allocatable
+			daily_production -= allocatable
+			order["produced"] = produced_for_order
+			order["production_progress"] = produced_for_order / required if required > 0.0 else 0.0
+
+		# Auslieferung: Menge vollstaendig UND Lieferfrist eingehalten.
+		if produced_for_order >= required and order["progress_days"] <= int(order["lead_time_days"]):
+			order["status"] = "delivered"
+			order["delivered_day"] = day
+			order["produced"] = required
+			# Erloes: ggf. mit Zahlungsziel (Forderung)
+			#
+			# Wichtig: Das Eigenkapital wird NICHT hier fortgeschrieben.
+			# Das geschieht einmal im Jahresabschluss ueber das
+			# Jahresergebnis. Andernfalls waere der Umsatz doppelt
+			# erfasst.
+			var revenue := float(order["revenue"])
+			economy.revenue_current_year += revenue
+			economy.revenue_total += revenue
+			if int(order.get("payment_delay_days", 0)) <= 0:
+				economy.move_cash(revenue)
+			else:
+				economy.receivables += revenue
+			stats["orders_completed"] = int(stats["orders_completed"]) + 1
+			completed_orders.append(order)
+			EventBus.order_completed.emit(order)
+			EventBus.notify(
+				"Auftrag abgeschlossen",
+				"%s Stück wurden geliefert. Umsatz: %s €" % [
+					_format(order["quantity"]), _format_int(revenue)
+				],
+				"success"
+			)
+
+	# Was heute nicht zugeteilt wurde, bleibt im Fertigwarenbestand
+	# fuer die naechsten Auftraege liegen.
+	finished_goods = daily_production
+
+	orders = orders.filter(func(o): return o["status"] == "accepted")
+
+
+## Die Nachfrage: Kundenaufträge, die von selbst entstehen.
+##
+## Ohne Nachfrage haette die Produktion keine Abnehmer – die Anlage
+## liefe ins Leere und keine Investition wuerde sich rechnen. Die
+## Nachfrage folgt definierten Regeln und ist deterministisch:
+##
+##  1. Grundmenge: ein fester Anteil der installierten Kapazitaet
+##     wird bestellt. Wer mehr Kapazitaet baut, bekommt auch mehr
+##     Auftrage – sonst waere eine Investition sinnlos.
+##  2. Der Preis orientiert sich am Marktpreis der Anlagen und
+##     liegt nie unter den variablen Stueckkosten. Ein Auftrag,
+##     bei dem jedes Stueck bares Geld verlieren wuerde, wird gar
+##     nicht erst angeboten.
+##  3. Die Menge schwankt in einem definierten Band. Die Schwankung
+##     folgt einer deterministischen Funktion aus Tag und Jahr – kein
+##     Zufall, aber auch keine konstante Nachfrage.
+##  4. Jeder Auftrag hat eine Lieferfrist. Wer die Frist reisst,
+##     verliert den Auftrag.
+##
+## Der Auftrag wird sofort angenommen: Im Spiel gibt es keinen
+## Vertrieb – die Firma ist ein etablierter Lieferant.
+func _generate_demand() -> void:
+	# Kapazitaet und Deckungsbeitrag der betriebsbereiten Anlagen.
+	#
+	# Bei mehreren Anlagentypen entscheidet der kapazitaetsgewichtete
+	# Durchschnitt: Die Nachfrage richtet sich nach dem, was das
+	# Werk insgesamt herstellt. Die letzte Anlage in der Schleife
+	# waere zufaellig und wuerde bei gemischten Anlagen den Preis
+	# und den Deckungsbeitrag bestimmen.
+	var capacity := 0.0
+	var db_weighted := 0.0
+	var price_weighted := 0.0
+	var var_weighted := 0.0
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if not instance.is_operational():
+			continue
+		# Nur Endstufen tragen zur Nachfrage bei: Eine Vorstufe
+		# verkauft nichts an den Markt.
+		if instance.spec.is_intermediate_stage():
+			continue
+		var cap := instance.spec.capacity_units_per_year
+		capacity += cap
+		db_weighted += _chain_contribution_margin(instance.spec) * cap
+		price_weighted += instance.spec.price_per_unit * cap
+		var_weighted += _chain_variable_cost(instance.spec) * cap
+	if capacity <= 0.0:
+		return
+	var db: float = db_weighted / capacity
+	var price_hint: float = price_weighted / capacity
+	var unit_var: float = var_weighted / capacity
+
+	# Ein Auftrag alle X Tage. Je groesser die Kapazitaet, desto
+	# oefter kommt ein Auftrag.
+	var interval := maxi(15, int(180.0 / maxf(1.0, capacity / 10000.0)))
+	if day % interval != 0:
+		return
+	# Am ersten Tag eines Jahres kein neuer Auftrag: das Jahr soll
+	# zusammenfassbar bleiben.
+	if day % DAYS_PER_YEAR == 0:
+		return
+
+	# Die bestellte Menge: ein Anteil der Kapazitaet.
+	#
+	# Der Anteil schwankt deterministisch zwischen 40 % und 80 % der
+	# Kapazitaet. Die Schwankung folgt einer Sinusfunktion ueber die
+	# Jahrestage – glatt, nachvollziehbar, ohne Zufall.
+	#
+	# Rahmenvertraege sichern eine Mindestmenge zu einem festen
+	# Preis. Diese Menge wird zusaetzlich zum schwankenden Anteil
+	# angeboten – der Markt koennte die vertragliche Menge nicht
+	# abnehmen, sonst waere der Vertrag wertlos.
+	var phase := float(day % DAYS_PER_YEAR) / float(DAYS_PER_YEAR) * TAU
+	var swing := 0.6 + 0.2 * sin(phase)
+	var share := 0.40 + 0.40 * swing
+	# floor() liefert in Godot 4 einen Variant – der Typ wird explizit
+	# angegeben, sonst schlaegt die Typinferenz fehl.
+	var quantity: float = floor(capacity * share / 100.0) * 100.0
+	if quantity <= 0.0:
+		quantity = 100.0
+
+	# Die vertraglich gesicherte Menge kommt hinzu. Sie wird zu
+	# festen Preisen angeboten, die gesichert sind.
+	var contracted := contracted_quantity()
+	if contracted > 0.0:
+		quantity += contracted
+
+	# Der Preis: variable Kosten plus eine Marge aus dem
+	# Deckungsbeitrag, gedeckelt vom Marktpreis der Anlagen.
+	# Die Untergrenze sind die variablen Stueckkosten: Kein Markt
+	# bietet dauerhaft Auftraege an, bei denen jedes Stueck bares
+	# Geld verliert – das waere eine Falle ohne Lerneffekt.
+	var price := maxf(db * 1.15, unit_var * 1.05)
+	if price_hint > unit_var:
+		# Der Preis orientiert sich am Marktpreis der Anlagen.
+		price = minf(price, price_hint)
+	if price <= unit_var:
+		# Unrentabel: der Auftrag wird gar nicht erst angeboten.
+		return
+
+	# Lieferfrist: so viele Tage, wie die Menge bei Tagesproduktion
+	# braucht, plus 40 % Puffer.
+	var daily := capacity / float(DAYS_PER_YEAR)
+	var needed := int(ceil(quantity / maxf(1.0, daily)))
+	var lead_time := maxi(10, int(needed * 1.4))
+
+	# Zahlungsziel: 30 Tage, gelegentlich 60. Das erzeugt
+	# Forderungen und macht die Liquiditaetsplanung spannend.
+	var payment_delay := 30
+	if day % 97 == 0:
+		payment_delay = 60
+
+	var order := {
+		"id": "auftrag-%d" % day,
+		"status": "accepted",
+		"customer": "Großhandel %d" % (1 + day % 7),
+		"quantity": quantity,
+		"price_per_unit": price,
+		"revenue": price * quantity,
+		"lead_time_days": lead_time,
+		"progress_days": 0,
+		"payment_delay_days": payment_delay,
+		"produced": 0.0,
+		"accepted_day": day,
+	}
+	orders.append(order)
+	stats["orders_received"] = int(stats.get("orders_received", 0)) + 1
+	EventBus.order_received.emit(order)
+	EventBus.notify(
+		"Neuer Kundenauftrag",
+		"%s bestellt %s Stück zu %s € je Stück. Lieferung in %d Tagen." % [
+			order["customer"], _format(quantity), _format_int(price), lead_time
+		],
+		"info"
+	)
+
+
+## Zieht fällige Forderungen ein.
+##
+## Kundenaufträge mit Zahlungsziel werden zunächst als Forderung
+## gebucht. Erreicht das Ziel, fliesst der Betrag in die Kasse. Ohne
+## diese Logik bliebe das Geld dauerhaft gebunden und die Liquidität
+## sinkf über die Zeit ohne sichtbaren Grund.
+func _collect_receivables() -> void:
+	var still_open: Array = []
+	for order in completed_orders:
+		if int(order.get("payment_delay_days", 0)) <= 0:
+			continue
+		if int(order.get("payment_received", 0)) == 1:
+			continue
+		var due_day := int(order.get("delivered_day", day)) + int(order.get("payment_delay_days", 0))
+		if day >= due_day:
+			var revenue := float(order["revenue"])
+			economy.move_cash(revenue)
+			economy.receivables = maxf(0.0, economy.receivables - revenue)
+			order["payment_received"] = 1
+			order["payment_received_day"] = day
+		else:
+			still_open.append(order)
+	# Abgeloeste Auftraege ohne Zahlungsziel bleiben fuer die Statistik.
+	for order in completed_orders:
+		if int(order.get("payment_delay_days", 0)) <= 0:
+			still_open.append(order)
+	completed_orders = still_open
+
+
+# ==================================================================
+# Geschäftsjahresabschluss
+# ==================================================================
+
+func _close_business_year() -> void:
+	# Abschreibungen und kalkulatorische Zinsen neu berechnen
+	var new_depreciation := 0.0
+	var new_imputed := 0.0
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if instance.is_operational():
+			new_depreciation += instance.current_depreciation()
+			new_imputed += instance.current_imputed_interest()
+	economy.depreciation_year = new_depreciation
+	economy.imputed_interest_year = new_imputed
+	# Zinsaufwand: strukturierte Darlehen tragen ihren eigenen
+	# Vertragszins auf die Restschuld; nur das uebrige (pauschale)
+	# Fremdkapital laeuft zum allgemeinen Kontokorrentsatz.
+	var structured_interest := 0.0
+	for loan in loans:
+		structured_interest += float(loan_service_due(loan)["interest"])
+	var unstructured_debt := maxf(0.0, economy.debt - structured_debt())
+	economy.interest_paid_year = unstructured_debt * economy.debt_rate + structured_interest
+
+	# Zahlungswirksame Fixkosten: Personal, Wartung, Verwaltung
+	var fixed := 0.0
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if instance.is_operational():
+			fixed += instance.spec.fixed_operating_costs
+			fixed += instance.spec.labor_cost()
+	economy.fixed_costs_year = fixed
+
+	# Materialverbrauch buchen.
+	#
+	# Wichtig: Das verbrauchte Material wird gegen den Lagerbestand
+	# gebucht und geht als Aufwand in die laufenden Kosten ein. Ohne
+	# diese Verbuchung wäre die Produktion kostenlos.
+	var material_cost := 0.0
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if instance.is_operational():
+			material_cost += instance.spec.material_per_unit * instance.spec.material_price_per_kg * instance.quantity_this_year
+	economy.material_costs_year = material_cost
+	economy.costs_current_year += material_cost
+	economy.costs_total += material_cost
+
+	# Variable Fertigungskosten buchen.
+	#
+	# Sie sind mit jeder gefertigten Einheit zahlungswirksam von
+	# der Kasse abgeflossen (siehe _produce_one_day). Hier werden
+	# sie als Aufwand des Jahres erfasst – auf derselben Basis
+	# (tatsaechlich gefertigte Menge), sonst ginge die Bilanz
+	# nicht auf. Ohne diese Buchung waere die Fertigung in der
+	# GuV kostenlos und jeder Break-even eine Luege.
+	var variable_cost := 0.0
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if instance.is_operational():
+			variable_cost += instance.spec.variable_cost_per_unit * instance.quantity_this_year
+	economy.variable_costs_year = variable_cost
+	economy.costs_current_year += variable_cost
+	economy.costs_total += variable_cost
+	# Den Lagerbestand je Materialart bewerten.
+	_revalue_inventory()
+
+	# Fixkosten als laufenden Aufwand verbuchen.
+	#
+	# Die Fixkosten sind zahlungswirksam und gehen in die Gewinnrechnung
+	# ein. Abschreibung und kalkulatorische Zinsen sind es nicht – sie
+	# wirken ueber die Ergebnisrechnung, ohne die Kasse zu bewegen.
+	economy.costs_current_year += economy.fixed_costs_year
+	economy.costs_total += economy.fixed_costs_year
+
+	# Abschreibung: mindert das Anlagevermögen und mindert den Gewinn.
+	economy.costs_current_year += economy.depreciation_year
+	economy.costs_total += economy.depreciation_year
+	economy.book_depreciation(economy.depreciation_year)
+
+	# Kalkulatorische Zinsen: mindern den Gewinn, sind aber nicht
+	# zahlungswirksam. Der eigentliche Zinsaufwand auf Fremdkapital
+	# wird weiter unten separat verbucht.
+	economy.costs_current_year += economy.imputed_interest_year
+	economy.costs_total += economy.imputed_interest_year
+
+	# Zinsaufwand auf Fremdkapital: zahlungswirksam.
+	economy.costs_current_year += economy.interest_paid_year
+	economy.costs_total += economy.interest_paid_year
+
+	# Tilgung auf das Fremdkapital.
+	#
+	# Die Tilgung ist zahlungswirksam, mindert aber das Eigenkapital
+	# nicht – sie reduziert das Fremdkapital. Sie ist daher KEIN Aufwand
+	# und gehoert nicht in die Gewinnrechnung, sondern in den
+	# Finanzierungsbereich.
+	#
+	# Der Tilgungsanteil ist eine Entscheidung des Spielers. Voreingestellt
+	# werden 10 % des Fremdkapitals getilgt, sofern die Kasse das
+	# hergibt. Wer nicht tilgt, behaelt Liquiditaet, zahlt aber mehr
+	# Zinsen.
+	var repayment: float = 0.0
+	# Die pauschale Tilgungsregel gilt NUR fuer Fremdkapital ohne
+	# Tilgungsplan – strukturierte Darlehen folgen ihrem Plan und
+	# duerfen nicht doppelt getilgt werden.
+	var flat_debt := maxf(0.0, economy.debt - structured_debt())
+	if flat_debt > 0.0 and economy.auto_repayment:
+		var planned: float = flat_debt * clampf(economy.repayment_share, 0.0, 1.0)
+		repayment = minf(planned, maxf(0.0, economy.cash))
+		if repayment > 0.0:
+			economy.move_cash(-repayment)
+			economy.debt = maxf(0.0, economy.debt - repayment)
+
+	# Schuldendienst der strukturierten Darlehen: Tilgung nach Plan.
+	# Der Zins wurde oben bereits im Zinsaufwand erfasst und wird
+	# weiter unten mit der Kasse verrechnet. Reicht die Kasse fuer
+	# die planmaessige Tilgung nicht, bleibt der Rest als Schuld
+	# stehen und kostet naechstes Jahr weiter Zinsen.
+	var settled: Array = []
+	for loan in loans:
+		var due := loan_service_due(loan)
+		var principal_due := float(due["principal"])
+		var paid := minf(principal_due, maxf(0.0, economy.cash))
+		if paid > 0.0:
+			economy.move_cash(-paid)
+			economy.debt = maxf(0.0, economy.debt - paid)
+			loan["remaining"] = maxf(0.0, float(loan["remaining"]) - paid)
+			repayment += paid
+		if paid < principal_due - 0.005:
+			EventBus.notify(
+				"Tilgung nicht gedeckt",
+				"Fuer %s fehlte die Liquiditaet: %s € Tilgung blieben offen." % [
+					loan_label(String(loan.get("kind", ""))),
+					_format_int(principal_due - paid),
+				],
+				"warning"
+			)
+		loan["years_elapsed"] = int(loan.get("years_elapsed", 0)) + 1
+		if float(loan["remaining"]) <= 0.005:
+			settled.append(loan)
+	for loan in settled:
+		loans.erase(loan)
+		EventBus.notify(
+			"Darlehen getilgt",
+			"%s ueber %s € ist vollstaendig zurueckgezahlt." % [
+				loan_label(String(loan.get("kind", ""))),
+				_format_int(float(loan.get("principal", 0.0))),
+			],
+			"success"
+		)
+	economy.repayment_year = repayment
+
+	# Jahr abschließen: Gewinn und Kasse.
+	#
+	# Wichtig: Der Umsatz ist der Kasse BEREITS bei der Lieferung
+	# gutgeschrieben worden. Hier darf er nicht ein zweites Mal
+	# hinzugefuegt werden – sonst waere der Umsatz doppelt erfasst.
+	#
+	# Was die Kasse im Jahr mindert, sind die ZAHLUNGSWIRKSAMEN
+	# Kosten:
+	#   Zinsaufwand auf Fremdkapital
+	#
+	# Fixkosten wurden bereits monatlich von der Kasse abgezogen
+	# (_book_monthly_fixed_costs); hier kommen sie nur noch in die
+	# Jahresrechnung als Aufwand. Doppelbuchung auf der Kasse wuerde
+	# die Liquiditaet zu stark schrumpfen lassen.
+	#
+	# Das Material wird hier NICHT noch einmal abgezogen: Die Zahlung
+	# erfolgte bereits beim Einkauf (buy_material mindert die Kasse),
+	# der Bestand wurde beim Verbrauch abgebaut. Der Materialaufwand
+	# gehoert in die Gewinnrechnung, nicht in eine zweite Barabbuchung.
+	#
+	# Abschreibung und kalkulatorische Zinsen sind nicht zahlungswirksam
+	# und bleiben deshalb ohne Wirkung auf die Kasse.
+	#
+	# Die Tilgung wurde oben bereits direkt gebucht (Fremdkapital
+	# sinkt, Kasse sinkt) und darf nicht noch einmal erfasst werden.
+	# Dividendenpolitik: Bei gesetzter Ausschuettungsquote wird der
+	# entsprechende Anteil des Jahresueberschusses automatisch als
+	# Dividende beschlossen. Nur ein positives Ergebnis wird
+	# ausgeschuettet, und nur soweit die Kasse es nach der
+	# Zinszahlung hergibt. Was nicht ausgeschuettet wird, bleibt
+	# als Selbstfinanzierung im Unternehmen.
+	if economy.dividend_policy_ratio > 0.0:
+		var distributable := maxf(0.0, economy.external_result())
+		var planned_dividend := (
+			distributable
+			* clampf(economy.dividend_policy_ratio, 0.0, 1.0)
+		)
+		planned_dividend = minf(
+			planned_dividend,
+			maxf(0.0, economy.cash - economy.interest_paid_year)
+		)
+		if planned_dividend > 0.0:
+			economy.dividend_current_year += planned_dividend
+			EventBus.notify(
+				"Dividende beschlossen",
+				"%s € Ausschuettung (%s %% des Jahresueberschusses)." % [
+					_format_int(planned_dividend),
+					"%.0f" % (economy.dividend_policy_ratio * 100.0),
+				],
+				"info"
+			)
+
+	economy.profit_current_year = economy.operating_result()
+	economy.move_cash(-economy.interest_paid_year)
+	economy.move_cash(-economy.dividend_current_year)
+	# Das Eigenkapital folgt dem EXTERNEN Ergebnis: ohne
+	# kalkulatorische Zinsen. Sie sind Kosten der Kostenrechnung,
+	# kein Aufwand - ihnen steht kein Wertverzehr auf der Aktivseite
+	# gegenueber. Mit ihnen im Eigenkapital waere die Bilanz jedes
+	# Jahr genau um die kalkulatorischen Zinsen schief.
+	economy.equity += economy.external_result() - economy.dividend_current_year
+	if economy.dividend_current_year > 0.0:
+		economy.dividends_paid += economy.dividend_current_year
+
+	# Rahmenvertraege: die Laufzeit verringert sich um ein Jahr.
+	for contract in contracts:
+		var remaining := int(contract.get("years_remaining", 0)) - 1
+		contract["years_remaining"] = maxi(0, remaining)
+		contract["delivered_this_year"] = 0.0
+		if remaining <= 0:
+			EventBus.notify(
+				"Vertrag ausgelaufen",
+				"%s ist nach %d Jahren ausgelaufen." % [
+					String(contract.get("customer", "Der Vertrag")),
+					int(contract.get("years", 0)),
+				],
+				"info"
+			)
+	# Ausgelaufene Vertraege entfernen.
+	var expired: Array = []
+	for contract in contracts:
+		if int(contract.get("years_remaining", 0)) <= 0:
+			expired.append(contract)
+	for contract in expired:
+		contracts.erase(contract)
+
+	# Jahreswerte zurücksetzen
+	economy.revenue_current_year = 0.0
+	economy.costs_current_year = 0.0
+	economy.dividend_current_year = 0.0
+
+	# Maschinen altern
+	for instance_id in machines:
+		machines[instance_id].advance_year(year)
+
+	stats["total_revenue"] = economy.revenue_total
+	stats["total_costs"] = economy.costs_total
+	stats["fixed_assets"] = economy.fixed_assets
+	stats["balance_check"] = economy.balance_check()
+
+	EventBus.day_passed.emit(year, _year_report())
+	EventBus.economy_changed.emit(economy.to_dict())
+
+
+## Jahresabschlussbericht.
+func _year_report() -> Dictionary:
+	return {
+		"year": year,
+		"revenue": economy.revenue_total,
+		"result": economy.profit_current_year,
+		"cash": economy.cash,
+		"roe": economy.roe_percent(),
+		"liquidity": economy.liquidity_ratio(),
+		"health": economy.health_status(),
+	}
+
+
+# ==================================================================
+# Spielaktionen
+# ==================================================================
+
+## Bestellt eine Maschine. Kapital wird gebunden, Lieferung wird angelegt.
+func order_machine(spec_id: StringName) -> Dictionary:
+	var spec: MachineSpec = specs.get(spec_id)
+	if spec == null:
+		return {"ok": false, "error": "Unbekannter Maschinentyp: %s" % spec_id}
+	if economy.cash < spec.acquisition_cost:
+		return {
+			"ok": false,
+			"error": "Nicht genügend Kapital: %s € benötigt, %s € verfügbar." % [
+				_format_int(spec.acquisition_cost), _format_int(economy.cash)
+			],
+		}
+
+	# Investitionsauszahlung: Kapital binden, Anlagevermögen erhöhen.
+	# Das ist KEIN laufender Aufwand – die Abschreibung wirkt später.
+	economy.book_investment(spec.acquisition_cost)
+	stats["machines_ordered"] = int(stats["machines_ordered"]) + 1
+
+	var instance_id := "%s_%d" % [spec.id, machines.size()]
+	var instance := MachineInstance.new(spec, instance_id)
+	instance.state = MachineInstance.State.ORDERED
+
+	# Position auf dem Gelände bestimmen
+	var spot: Vector2i = grid.find_free_spot(FactoryGrid.Zone.PRODUCTION, 3, 3)
+	if spot.x >= 0:
+		instance.position = grid.cell_to_world(spot.x + 1, spot.y + 1)
+
+	machines[instance_id] = instance
+
+	var delivery := {
+		"instance_id": instance_id,
+		"spec_id": spec_id,
+		"phase": "ordered",
+		"days_remaining": spec.delivery_days,
+		"ordered_day": day,
+	}
+	deliveries.append(delivery)
+
+	EventBus.investment_committed.emit({
+		"instance_id": instance_id,
+		"spec_id": spec_id,
+		"cost": spec.acquisition_cost,
+		"delivery_days": spec.delivery_days,
+	})
+	EventBus.delivery_ordered.emit(delivery)
+	EventBus.notify(
+		"Maschine bestellt",
+		"%s für %s € bestellt. Lieferung in %d Tagen." % [
+			spec.display_name, _format_int(spec.acquisition_cost), spec.delivery_days
+		],
+		"info"
+	)
+
+	return {"ok": true, "instance_id": instance_id, "delivery": delivery}
+
+
+## Nimmt einen Kundenauftrag an.
+func accept_order(order: Dictionary) -> bool:
+	if order.get("status", "") == "accepted":
+		return true
+	order["status"] = "accepted"
+	order["accepted_day"] = day
+	orders.append(order)
+	EventBus.order_received.emit(order)
+	return true
+
+
+## Verkauft / liquidiert eine Maschine.
+func divest_machine(instance_id: String, sale_price: float) -> Dictionary:
+	var instance: MachineInstance = machines.get(instance_id)
+	if instance == null:
+		return {"ok": false, "error": "Maschine nicht gefunden."}
+	var book := instance.book_value
+	var gain := sale_price - book
+	economy.move_cash(sale_price)
+	economy.equity += gain
+	# Restbuchwert wird ausgebucht
+	economy.depreciation_year = maxf(0.0, economy.depreciation_year - instance.current_depreciation())
+	machines.erase(instance_id)
+	deliveries = deliveries.filter(func(d): return d["instance_id"] != instance_id)
+	EventBus.notify(
+		"Maschine verkauft",
+		"%s für %s € veräußert. Buchwert %s €." % [
+			instance.spec.display_name, _format_int(sale_price), _format_int(book)
+		],
+		"info"
+	)
+	return {"ok": true, "gain": gain, "book_value": book}
+
+
+## Nimmt einen Kredit auf.
+##
+## Der Zinssatz richtet sich nach der Bonitaet des Unternehmens:
+## Eine hohe Eigenkapitalquote und eine niedrige Verschuldung senken
+## den Zinssatz. Das macht die Finanzierung zu einer echten
+## Entscheidung – zu viel Fremdkapital kostet mehr.
+##
+## Die Kreditaufnahme ist nur so hoch moeglich, wie die Bank
+## gewaehrt. Die Hoehe richtet sich nach dem vorhandenen Eigenkapital
+## und der vorhandenen Verschuldung.
+func take_loan(amount: float, rate: float = -1.0) -> Dictionary:
+	if amount <= 0.0:
+		return {"ok": false, "error": "Kreditbetrag muss positiv sein."}
+
+	var limit := credit_limit()
+	if amount > limit:
+		return {
+			"ok": false,
+			"error": "Die Bank gewaehrt hoechstens %s € (Eigenkapitalquote %s, Fremdkapitalquote %s)." % [
+				_format_int(limit),
+				"%.0f %%" % (equity_ratio() * 100.0),
+				"%.0f %%" % (debt_ratio() * 100.0),
+			],
+		}
+
+	economy.move_cash(amount)
+	economy.debt += amount
+	if rate >= 0.0:
+		economy.debt_rate = rate
+	else:
+		# Der Zinssatz richtet sich nach der Bonitaet.
+		economy.debt_rate = _interest_rate_for(debt_ratio())
+	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Kredit aufgenommen",
+		"%s € zu %s %% Zins. Die Liquiditaet steigt, das Fremdkapital "
+		% [_format_int(amount), "%.1f" % (economy.debt_rate * 100.0)]
+		+ "belastet die Bilanz.",
+		"info"
+	)
+	return {"ok": true, "amount": amount, "rate": economy.debt_rate}
+
+
+## Nimmt ein strukturiertes Darlehen mit Tilgungsplan auf.
+##
+## `kind`:
+##   ANNUITY    – Annuitaetendarlehen: konstante Jahresrate, der
+##                Zinsanteil sinkt, der Tilgungsanteil steigt.
+##   REDEMPTION – Ratendarlehen: konstante Tilgung, die Jahresrate
+##                sinkt von Jahr zu Jahr.
+##   FEST       – endfaelliges Darlehen: waehrend der Laufzeit nur
+##                Zinsen, die Tilgung kommt komplett am Ende.
+##
+## Der Zinssatz richtet sich nach der Bonitaet (Fremdkapitalquote),
+## kann fuer Lehrbuchaufgaben aber explizit vorgegeben werden. Der
+## Schuldendienst wird beim Jahresabschluss automatisch nach Plan
+## gebucht. Das Kreditlimit der Bank gilt wie bei jedem Kredit.
+func take_structured_loan(
+	amount: float, years: int, kind: String = "ANNUITY", rate: float = -1.0
+) -> Dictionary:
+	if amount <= 0.0:
+		return {"ok": false, "error": "Kreditbetrag muss positiv sein."}
+	if years < 1:
+		return {"ok": false, "error": "Die Laufzeit muss mindestens 1 Jahr betragen."}
+	if kind != "ANNUITY" and kind != "REDEMPTION" and kind != "FEST":
+		return {"ok": false, "error": "Unbekannte Darlehensform: %s" % kind}
+
+	var limit := credit_limit()
+	if amount > limit:
+		return {
+			"ok": false,
+			"error": "Die Bank gewaehrt hoechstens %s €." % _format_int(limit),
+		}
+
+	var loan_rate := rate if rate >= 0.0 else _interest_rate_for(debt_ratio())
+	loan_sequence += 1
+	var loan := {
+		"id": "loan-%d" % loan_sequence,
+		"kind": kind,
+		"principal": amount,
+		"rate": loan_rate,
+		"years": years,
+		"years_elapsed": 0,
+		"remaining": amount,
+	}
+	loans.append(loan)
+	economy.move_cash(amount)
+	economy.debt += amount
+	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Darlehen aufgenommen",
+		"%s € (%s, %d Jahre) zu %s %% Zins." % [
+			_format_int(amount), loan_label(kind), years,
+			"%.1f" % (loan_rate * 100.0),
+		],
+		"info"
+	)
+	return {
+		"ok": true,
+		"id": String(loan["id"]),
+		"rate": loan_rate,
+		"plan": BWLEngine.amortization_plan(amount, loan_rate, years, kind),
+	}
+
+
+## Deutsche Bezeichnung einer Darlehensform.
+static func loan_label(kind: String) -> String:
+	match kind:
+		"ANNUITY":
+			return "Annuitätendarlehen"
+		"REDEMPTION":
+			return "Ratendarlehen"
+		"FEST":
+			return "endfälliges Darlehen"
+	return kind
+
+
+## Restschuld aller strukturierten Darlehen zusammen.
+func structured_debt() -> float:
+	var total := 0.0
+	for loan in loans:
+		total += float(loan.get("remaining", 0.0))
+	return total
+
+
+## Der Schuldendienst eines Darlehens fuer das LAUFENDE Jahr.
+##
+## Rueckgabe: {interest, principal}. Die Zahlen folgen exakt dem
+## Tilgungsplan aus BWLEngine.amortization_plan – derselbe Stoff,
+## den das Lernsystem lehrt, treibt hier die Simulation.
+func loan_service_due(loan: Dictionary) -> Dictionary:
+	var remaining := float(loan.get("remaining", 0.0))
+	var loan_rate := float(loan.get("rate", 0.0))
+	var years := int(loan.get("years", 1))
+	var elapsed := int(loan.get("years_elapsed", 0))
+	var interest := remaining * loan_rate
+	var principal_due := 0.0
+	match String(loan.get("kind", "ANNUITY")):
+		"ANNUITY":
+			var annuity := float(loan.get("principal", 0.0)) * BWLEngine.anf(loan_rate, years)
+			principal_due = minf(remaining, maxf(0.0, annuity - interest))
+		"REDEMPTION":
+			principal_due = minf(remaining, float(loan.get("principal", 0.0)) / float(years))
+		"FEST":
+			principal_due = remaining if elapsed >= years - 1 else 0.0
+	return {"interest": interest, "principal": principal_due}
+
+
+## Der Kreditbetrag, den die Bank gewaehrt.
+##
+## Grundlage ist das Eigenkapital. Hoeher verschuldete Unternehmen
+## bekommen weniger Kredit – so kann der Spieler nicht beliebig
+## Schulden aufnehmen.
+func credit_limit() -> float:
+	var equity := economy.equity
+	if equity <= 0.0:
+		return 0.0
+	# Bei einer FK-Quote von 100 % ist kein weiterer Kredit moeglich.
+	var room := maxf(0.0, 1.0 - debt_ratio())
+	# Zusaetzlich begrenzt das Eigenkapital die Hoehe.
+	return minf(equity * room, 500_000.0)
+
+
+## Der Zinssatz, den die Bank bei der aktuellen Verschuldung anbietet.
+##
+## 4 % bei niedriger Verschuldung, 9 % bei hoher. Dazwischen linear.
+func _interest_rate_for(current_debt_ratio: float) -> float:
+	var ratio := clampf(current_debt_ratio, 0.0, 1.0)
+	return 0.04 + ratio * 0.05
+
+
+## Setzt den Tilgungsanteil des Fremdkapitals.
+##
+## Der Anteil gilt fuer das Fremdkapital insgesamt und wird beim
+## Jahresabschluss abgetragen. 0 % bedeutet: vollstaendig auf
+## Abzahlung, Liquiditaet bleibt hoch, Zinsen laufen weiter.
+func set_repayment_share(share: float) -> Dictionary:
+	if share < 0.0 or share > 1.0:
+		return {"ok": false, "error": "Der Tilgungsanteil muss zwischen 0 und 100 % liegen."}
+	economy.repayment_share = share
+	EventBus.economy_changed.emit(economy.to_dict())
+	return {"ok": true, "share": share}
+
+
+## Setzt die Ausschuettungsquote der Dividendenpolitik.
+##
+## 0 = Vollthesaurierung: der gesamte Gewinn bleibt im Unternehmen
+## (Selbstfinanzierung). 1 = Vollausschuettung. Die Dividende wird
+## beim Jahresabschluss automatisch aus dem Jahresueberschuss
+## beschlossen; Verlustjahre schuetten nichts aus.
+func set_dividend_policy(ratio: float) -> Dictionary:
+	if ratio < 0.0 or ratio > 1.0:
+		return {"ok": false, "error": "Die Ausschuettungsquote muss zwischen 0 und 100 % liegen."}
+	economy.dividend_policy_ratio = ratio
+	EventBus.economy_changed.emit(economy.to_dict())
+	return {"ok": true, "ratio": ratio}
+
+
+## Die Eigenkapitalquote (Anteil des EK an der Gesamtkapitalstruktur).
+func equity_ratio() -> float:
+	var total := economy.equity + economy.debt
+	if total <= 0.0:
+		return 0.0
+	return economy.equity / total
+
+
+## Die Fremdkapitalquote.
+func debt_ratio() -> float:
+	var total := economy.equity + economy.debt
+	if total <= 0.0:
+		return 0.0
+	return economy.debt / total
+
+
+## Die gesamten Finanzierungskosten p.a. (Zinsen + Tilgung).
+func financing_costs_year() -> float:
+	return economy.interest_paid_year + economy.repayment_year
+
+
+## Die Zinsbelastung im Verhältnis zum Eigenkapital.
+##
+## Hohe Werte zeigen, dass der Kreditzins das Eigenkapital auffrisst.
+func interest_burden() -> float:
+	if economy.equity <= 0.0:
+		return 0.0
+	return economy.interest_paid_year / economy.equity
+
+
+## Tilgt einen Kredit.
+func repay_loan(amount: float) -> Dictionary:
+	if amount <= 0.0:
+		return {"ok": false, "error": "Tilgungsbetrag muss positiv sein."}
+	var actual := minf(amount, economy.debt)
+	economy.move_cash(-actual)
+	economy.debt = maxf(0.0, economy.debt - actual)
+	EventBus.economy_changed.emit(economy.to_dict())
+	return {"ok": true, "amount": actual}
+
+
+# ==================================================================
+# Abfragen
+# ==================================================================
+
+
+## Finanzplan: Kapitalbedarf und Zahlungsstroeme des kommenden Jahres.
+##
+## Drei Bausteine, alle deterministisch aus dem Ist-Zustand:
+##  1. Kapitalbedarf des Umlaufvermoegens: Kapitalbindungsdauer
+##     (Materiallager + Produktion + Zahlungsziel) mal
+##     zahlungswirksame Tageskosten bei Planauslastung – das
+##     Lehrbuchverfahren aus BWLEngine.working_capital_need.
+##  2. Schuldendienst: Zinsen und planmaessige Tilgung aller
+##     Darlehen im kommenden Jahr.
+##  3. Erwartete Einzahlungen: offene Auftraege (Restmenge),
+##     Rahmenvertraege und ausstehende Forderungen.
+func financial_plan() -> Dictionary:
+	# 1. Kapitalbedarf des Umlaufvermoegens.
+	var daily_cost := 0.0
+	for m in active_machines():
+		var cap_daily := m.spec.capacity_units_per_year / float(DAYS_PER_YEAR)
+		daily_cost += m.spec.cash_fixed_costs() / float(DAYS_PER_YEAR)
+		daily_cost += m.spec.variable_cost_per_unit * cap_daily
+		daily_cost += m.spec.material_per_unit * m.spec.material_price_per_kg * cap_daily
+	var phases := [
+		{"name": "Materiallager", "days": float(MATERIAL_LEAD_TIME_DAYS)},
+		{"name": "Produktion", "days": 1.0},
+		{"name": "Zahlungsziel der Kunden", "days": 30.0},
+	]
+	var working_capital := BWLEngine.working_capital_need(phases, 0.0, daily_cost)
+
+	# 2. Schuldendienst des kommenden Jahres.
+	var flat_debt := maxf(0.0, economy.debt - structured_debt())
+	var flat_interest := flat_debt * economy.debt_rate
+	var flat_repayment := 0.0
+	if economy.auto_repayment:
+		flat_repayment = flat_debt * clampf(economy.repayment_share, 0.0, 1.0)
+	var loan_service: Array = []
+	var loan_interest := 0.0
+	var loan_principal := 0.0
+	for loan in loans:
+		var due := loan_service_due(loan)
+		loan_interest += float(due["interest"])
+		loan_principal += float(due["principal"])
+		loan_service.append({
+			"id": String(loan.get("id", "")),
+			"kind": String(loan.get("kind", "")),
+			"label": loan_label(String(loan.get("kind", ""))),
+			"remaining": float(loan.get("remaining", 0.0)),
+			"interest": float(due["interest"]),
+			"principal": float(due["principal"]),
+		})
+
+	# 3. Erwartete Einzahlungen.
+	var backlog_revenue := 0.0
+	for order in orders:
+		if String(order.get("status", "")) != "accepted":
+			continue
+		var quantity := float(order.get("quantity", 0.0))
+		if quantity <= 0.0:
+			continue
+		var open_share := clampf(
+			1.0 - float(order.get("produced", 0.0)) / quantity, 0.0, 1.0
+		)
+		backlog_revenue += float(order.get("revenue", 0.0)) * open_share
+	var contracted_revenue := 0.0
+	for contract in contracts:
+		if int(contract.get("years_remaining", 0)) > 0:
+			contracted_revenue += float(contract.get("revenue_per_year", 0.0))
+
+	var fixed_costs_cash := 0.0
+	for m in active_machines():
+		fixed_costs_cash += m.spec.cash_fixed_costs()
+
+	var total_out := (
+		fixed_costs_cash + flat_interest + flat_repayment
+		+ loan_interest + loan_principal
+	)
+	var total_in := backlog_revenue + contracted_revenue + economy.receivables
+	return {
+		"working_capital": working_capital,
+		"daily_cost": daily_cost,
+		"phases": phases,
+		"flat_debt": flat_debt,
+		"flat_interest": flat_interest,
+		"flat_repayment": flat_repayment,
+		"loan_service": loan_service,
+		"loan_interest": loan_interest,
+		"loan_principal": loan_principal,
+		"fixed_costs_cash": fixed_costs_cash,
+		"expected_backlog_revenue": backlog_revenue,
+		"expected_contract_revenue": contracted_revenue,
+		"receivables": economy.receivables,
+		"expected_inflow": total_in,
+		"expected_outflow": total_out,
+		"net_plan": total_in - total_out,
+		"cash": economy.cash,
+	}
+
+
+## Anzahl der Aktien, in die das Unternehmen gedanklich zerlegt ist.
+## Startwert 1.000; eine Kapitalerhoehung gibt zusaetzliche junge
+## Aktien aus und erhoeht die Zahl dauerhaft.
+var shares_outstanding: float = 1000.0
+
+## Aktienbewertung des eigenen Unternehmens als Lernwerkzeug.
+##
+## Die Firma wird gedanklich in 1.000 Aktien zerlegt. Bewertet wird
+## mit den Verfahren aus dem Lernsystem: Buchwert je Aktie, Ergebnis
+## je Aktie, CAPM-Eigenkapitalkosten und Gordon-Wachstumsmodell.
+## Das Wachstum folgt der nachhaltigen Wachstumsrate
+## g = Thesaurierungsquote x Eigenkapitalrendite – damit haengt der
+## Unternehmenswert direkt an der eigenen Dividendenpolitik.
+func share_valuation(
+	risk_free: float = 0.025, beta: float = 1.1, market_return: float = 0.08
+) -> Dictionary:
+	var shares := shares_outstanding
+	# Basis ist das zuletzt FESTGESTELLTE Jahresergebnis (externe
+	# Sicht: ohne kalkulatorische Zinsen). Das laufende Jahr ist
+	# keine Basis – seine Kosten werden erst beim Jahresabschluss
+	# gebucht, der Zwischenstand waere systematisch zu optimistisch.
+	var profit := economy.profit_current_year + economy.imputed_interest_year
+	var eps_value := profit / shares
+	var book_value := economy.equity / shares
+	var payout := clampf(economy.dividend_policy_ratio, 0.0, 1.0)
+	var dividend := maxf(0.0, eps_value * payout)
+	var roe := 0.0
+	if economy.equity > 0.0:
+		roe = profit / economy.equity
+	var growth := BWLEngine.sustainable_growth(1.0 - payout, roe)
+	# Wachstum deckeln: Gordon braucht r > g, und dauerhaft mehr als
+	# 5 % Wachstum verspricht kein seriöser Plan.
+	growth = clampf(growth, 0.0, 0.05)
+	var r := BWLEngine.capm(risk_free, beta, market_return)
+	var d1 := dividend * (1.0 + growth)
+	var gordon_value: Variant = null
+	if d1 > 0.0 and r > growth:
+		gordon_value = BWLEngine.gordon(d1, r, growth)
+	return {
+		"shares": shares,
+		"profit": profit,
+		"eps": eps_value,
+		"book_value_per_share": book_value,
+		"payout_ratio": payout,
+		"dividend_per_share": dividend,
+		"roe": roe,
+		"growth": growth,
+		"cost_of_equity": r,
+		"gordon_value": gordon_value,
+	}
+
+
+## Der aktuelle rechnerische Aktienkurs.
+##
+## Liefert der Gordon-Ansatz einen Wert (Dividende vorhanden,
+## r > g), gilt dieser. Ohne Dividende bleibt der Buchwert je Aktie
+## der Anker – konservativ, aber nie null, solange Eigenkapital da
+## ist.
+func current_share_price() -> float:
+	var valuation := share_valuation()
+	if valuation["gordon_value"] != null:
+		return float(valuation["gordon_value"])
+	return float(valuation["book_value_per_share"])
+
+
+## Kapitalerhoehung mit Bezugsrecht.
+##
+## `ratio_old_per_new`: Bezugsverhaeltnis alt:neu – bei 4 kommt auf
+## vier alte Aktien eine junge. `issue_price`: Ausgabekurs der
+## jungen Aktien. Er muss UNTER dem aktuellen Kurs liegen, sonst
+## zeichnet niemand – und ueber null.
+##
+## Wirkung: Die Einzahlung der neuen Aktionaere fliesst in die Kasse
+## und erhoeht das Eigenkapital (Aktivtausch gibt es hier nicht –
+## es ist Aussenfinanzierung). Der Kurs faellt rechnerisch auf den
+## Mischkurs; der Bezugsrechtswert gleicht den Altaktionaeren genau
+## diesen Verlust aus. Beide Werte kommen aus
+## BWLEngine.subscription_right – demselben Verfahren, das das
+## Lernsystem lehrt.
+func capital_increase(ratio_old_per_new: float, issue_price: float) -> Dictionary:
+	if ratio_old_per_new < 1.0:
+		return {"ok": false, "error": "Das Bezugsverhaeltnis muss mindestens 1:1 sein."}
+	if issue_price <= 0.0:
+		return {"ok": false, "error": "Der Ausgabekurs muss positiv sein."}
+	var old_price := current_share_price()
+	if old_price <= 0.0:
+		return {"ok": false, "error": "Ohne Eigenkapital ist keine Kapitalerhoehung platzierbar."}
+	if issue_price >= old_price:
+		return {
+			"ok": false,
+			"error": (
+				"Der Ausgabekurs (%s €) muss unter dem aktuellen Kurs (%s €) liegen,"
+				% [_format_int(issue_price), _format_int(old_price)]
+				+ " sonst zeichnet niemand die jungen Aktien."
+			),
+		}
+
+	var new_shares := shares_outstanding / ratio_old_per_new
+	var inflow := new_shares * issue_price
+	var right := BWLEngine.subscription_right({
+		"old_shares": shares_outstanding,
+		"new_shares": new_shares,
+		"old_share_price": old_price,
+		"issue_price_new": issue_price,
+		"nominal_value": 1.0,
+	})
+
+	economy.move_cash(inflow)
+	economy.equity += inflow
+	shares_outstanding += new_shares
+
+	EventBus.economy_changed.emit(economy.to_dict())
+	EventBus.notify(
+		"Kapitalerhöhung durchgeführt",
+		"%s junge Aktien zu %s € ausgegeben: %s € Zufluss. Mischkurs %s €, Bezugsrecht %s €." % [
+			_format_int(new_shares),
+			_format_int(issue_price),
+			_format_int(inflow),
+			_format_int(float(right["mixed_price"])),
+			String.num(float(right["subscription_right_value"]), 2).replace(".", ","),
+		],
+		"success"
+	)
+	return {
+		"ok": true,
+		"new_shares": new_shares,
+		"inflow": inflow,
+		"old_price": old_price,
+		"mixed_price": float(right["mixed_price"]),
+		"subscription_right_value": float(right["subscription_right_value"]),
+		"ratio": float(right["ratio"]),
+	}
+
+
+## Lohmann-Ruchti-Ausblick fuer den eigenen Maschinenpark.
+##
+## Der Kapazitaetserweiterungseffekt: Abschreibungsgegenwerte
+## fliessen als Umsatz zurueck und finanzieren neue Anlagen, bevor
+## die alten ausscheiden. Gerechnet wird mit der am haeufigsten
+## vorhandenen Anlagenart im aktiven Bestand.
+func lohmann_ruchti_outlook(years: int = 7) -> Dictionary:
+	var counts: Dictionary = {}
+	for m in active_machines():
+		var key := m.spec.id
+		counts[key] = int(counts.get(key, 0)) + 1
+	if counts.is_empty():
+		return {"ok": false, "error": "Keine aktive Anlage im Bestand."}
+	var best_id: StringName = &""
+	var best_count := 0
+	for key in counts:
+		if int(counts[key]) > best_count:
+			best_count = int(counts[key])
+			best_id = key
+	var spec: MachineSpec = specs.get(best_id)
+	if spec == null:
+		return {"ok": false, "error": "Anlagentyp unbekannt."}
+	return {
+		"ok": true,
+		"spec_id": String(best_id),
+		"display_name": spec.display_name,
+		"machines": best_count,
+		"cost_per_machine": spec.acquisition_cost,
+		"useful_life": spec.useful_life_years,
+		"rows": BWLEngine.lohmann_ruchti(
+			best_count, spec.acquisition_cost, spec.useful_life_years, years
+		),
+	}
+
+## Alle Maschinen im aktiven Betrieb.
+func active_machines() -> Array[MachineInstance]:
+	var out: Array[MachineInstance] = []
+	for id in machines:
+		var m: MachineInstance = machines[id]
+		if m.is_operational():
+			out.append(m)
+	return out
+
+
+## Aktuelle Gesamtauslastung aller Anlagen in Prozent.
+func current_utilization() -> float:
+	var active := active_machines()
+	if active.is_empty():
+		return 0.0
+	var total_capacity := 0.0
+	var total_produced := 0.0
+	for m in active:
+		total_capacity += m.spec.capacity_units_per_year
+		total_produced += m.quantity_this_year
+	if total_capacity <= 0.0:
+		return 0.0
+	return (total_produced / total_capacity) * 100.0
+
+
+## Monatliche Fixkosten (für die Liquiditätsanzeige).
+func monthly_fixed_costs() -> float:
+	# Die Jahresfixkosten werden direkt aus den betriebsbereiten
+	# Anlagen berechnet. `economy.fixed_costs_year` wird erst beim
+	# Jahresabschluss gesetzt und taege fuer die laufende
+	# Zahlungswirkung zu spaet.
+	var total := 0.0
+	for instance_id in machines:
+		var instance: MachineInstance = machines[instance_id]
+		if instance.is_operational():
+			total += instance.spec.fixed_operating_costs
+			total += instance.spec.labor_cost()
+	return total / 12.0
+
+
+## Serialisierbarer Zustand der Simulation.
+func to_dict() -> Dictionary:
+	var machine_data := {}
+	for id in machines:
+		machine_data[id] = machines[id].to_dict()
+	return {
+		"day": day,
+		"year": year,
+		"tick": tick,
+		"economy": economy.to_dict(),
+		"grid": grid.to_dict(),
+		"machines": machine_data,
+		"orders": orders,
+		"completed_orders": completed_orders,
+		"deliveries": deliveries,
+		"material_deliveries": material_deliveries,
+		"contracts": contracts,
+		"contract_sequence": contract_sequence,
+		"inventory_material": inventory_material,
+		"material_inventory": material_inventory,
+		"intermediate_inventory": intermediate_inventory,
+		"finished_goods": finished_goods,
+		"loans": loans,
+		"loan_sequence": loan_sequence,
+		"shares_outstanding": shares_outstanding,
+		"stats": stats,
+	}
+
+
+## Stellt den Simulationszustand aus einem Save wieder her.
+func from_dict(data: Dictionary) -> void:
+	day = int(data.get("day", 0))
+	year = int(data.get("year", 1))
+	tick = int(data.get("tick", 0))
+	economy.from_dict(data.get("economy", {}))
+	grid.from_dict(data.get("grid", {}))
+	machines.clear()
+	var machine_data: Dictionary = data.get("machines", {})
+	for id in machine_data:
+		var entry: Dictionary = machine_data[id]
+		var spec_id: StringName = StringName(entry.get("spec_id", ""))
+		var spec: MachineSpec = specs.get(spec_id)
+		if spec == null:
+			continue
+		var instance := MachineInstance.new(spec, String(id))
+		instance.from_dict(entry)
+		machines[id] = instance
+	orders = data.get("orders", [])
+	completed_orders = data.get("completed_orders", [])
+	deliveries = data.get("deliveries", [])
+	material_deliveries = data.get("material_deliveries", [])
+	# Rahmenvertraege gehoeren zum Spielstand: eine zugesicherte
+	# Abnahmemenge ueberlebt den Neustart, sonst waere der Vertrag
+	# fuer den Spieler wertlos.
+	contracts = data.get("contracts", [])
+	# Die laufende Vertragsnummer muss mitwandern, sonst kollidieren
+	# neue Vertrags-IDs nach dem Laden mit bestehenden.
+	contract_sequence = int(data.get("contract_sequence", contracts.size()))
+	inventory_material = float(data.get("inventory_material", 0.0))
+	# Die Materialbestände je Art. Die Schluessel sind Strings, weil
+	# JSON keine Schluessel als StringName kennt.
+	material_inventory = {}
+	var stored: Dictionary = data.get("material_inventory", {})
+	for material_key in stored:
+		material_inventory[StringName(material_key)] = float(stored[material_key])
+	# Zwischenproduktbestände. Die Schlüssel sind Strings, weil JSON
+	# keine Schlüssel als StringName kennt.
+	intermediate_inventory = {}
+	var stored_intermediate: Dictionary = data.get("intermediate_inventory", {})
+	for product_key in stored_intermediate:
+		intermediate_inventory[StringName(product_key)] = float(stored_intermediate[product_key])
+	# Der Fertigwarenbestand gehoert zum Spielstand: gefertigte,
+	# noch nicht ausgelieferte Ware ueberlebt den Neustart.
+	finished_goods = float(data.get("finished_goods", 0.0))
+	# Strukturierte Darlehen: Tilgungsplaene laufen ueber Jahre und
+	# muessen den Neustart ueberleben.
+	loans = data.get("loans", [])
+	loan_sequence = int(data.get("loan_sequence", loans.size()))
+	shares_outstanding = float(data.get("shares_outstanding", 1000.0))
+	stats = data.get("stats", stats)
+
+
+# ==================================================================
+# Formatierung
+# ==================================================================
+
+func _format(value: float) -> String:
+	return String.num(value, 2)
+
+
+func _format_int(value: float) -> String:
+	return String.num(round(value), 0)
