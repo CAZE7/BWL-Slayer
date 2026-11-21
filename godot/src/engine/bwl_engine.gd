@@ -603,8 +603,36 @@ static func valuation_by_multiple(eps_value: float, multiple: float) -> float:
 # ==================================================================
 
 static func format_eur(value: float, decimals: int = 2) -> String:
-	return String.num(value, decimals).replace(".", ",") + " €"
+	return format_number(value, decimals) + " €"
 
 
 static func format_pct(value: float, decimals: int = 2) -> String:
 	return String.num(value, decimals).replace(".", ",") + " %"
+
+
+## Deutsche Zahlformatierung: Punkt als Tausender-, Komma als
+## Dezimaltrenner. "1234567.89" wird zu "1.234.567,89".
+##
+## Ohne die Gruppierung zeigt die Oberflaeche "34000 €" - ab
+## fuenf Stellen ist das schwer zu lesen und wirkt unfertig.
+static func format_number(value: float, decimals: int = 0) -> String:
+	var negative := value < 0.0
+	var text := String.num(absf(value), decimals).replace(".", ",")
+	# Rundet ein kleiner negativer Wert auf null, darf kein
+	# Minuszeichen stehen bleiben ("-0 €").
+	var is_zero := true
+	for ch in text:
+		if ch != "0" and ch != ",":
+			is_zero = false
+			break
+	var parts := text.split(",")
+	var digits := parts[0]
+	var grouped := ""
+	var count := 0
+	for i in range(digits.length() - 1, -1, -1):
+		grouped = digits[i] + grouped
+		count += 1
+		if count % 3 == 0 and i > 0:
+			grouped = "." + grouped
+	parts[0] = grouped
+	return ("-" if negative and not is_zero else "") + ",".join(parts)

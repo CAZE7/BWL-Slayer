@@ -210,13 +210,19 @@ func _format_int(value: float) -> String:
 	return ("-" if negative else "") + grouped
 
 
-## Geldbetrag formatieren.
-func _format_eur(value: float) -> String:
+## Geldbetrag formatieren - OHNE Waehrungszeichen.
+##
+## Jedes Template schreibt sein "€" (oder "Euro") selbst. Haengt der
+## Formatierer es zusaetzlich an, steht "25.000 € €" im Text - genau
+## dieser Doppler stand frueher in jedem Beraterhinweis.
+func _format_eur(value: float, decimals: int = 0) -> String:
 	var negative := value < 0.0
 	var amount := absf(value)
-	var text := "%.0f €" % amount
-	# Tausenderpunkt einfuegen.
-	var digits := text.split(".")[0]
+	# Deutsches Format: Komma als Dezimaltrenner, Punkt als
+	# Tausendertrenner.
+	var text := String.num(amount, decimals).replace(".", ",")
+	var parts := text.split(",")
+	var digits := parts[0]
 	var grouped := ""
 	var count := 0
 	for i in range(digits.length() - 1, -1, -1):
@@ -224,8 +230,8 @@ func _format_eur(value: float) -> String:
 		count += 1
 		if count % 3 == 0 and i > 0:
 			grouped = "." + grouped
-	text = text.replace(digits, grouped)
-	return ("-" if negative else "") + text
+	parts[0] = grouped
+	return ("-" if negative else "") + ",".join(parts)
 
 
 func _on_tick(_day: int, _tick: int) -> void:
@@ -416,7 +422,7 @@ func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 					"Bei einem Diskontsatz von %.1f %% beträgt der Kapitalwert "
 					+ "dieser Anlage %s €. Der Kapitaleinsatz ist nicht "
 					+ "gerechtfertigt."
-				) % [rate * 100.0, BWLEngine.format_eur(npv)],
+				) % [rate * 100.0, _format_eur(npv)],
 				"questions": [
 					"Bei welcher Menge wäre die Anlage rentabel?",
 					"Wie hoch müsste der Verkaufspreis sein, damit der Kapitalwert positiv wird?",
@@ -441,11 +447,11 @@ func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 				"title": "%s: Kapitalwert unter den Fixkosten" % m.spec.display_name,
 				"analysis": (
 					"Der Kapitalwert dieser Anlage beträgt %s € p.a. Ihre "
-					+ "jaehrlichen Fixkosten liegen bei %s €. Damit liefert "
+					+ "jährlichen Fixkosten liegen bei %s €. Damit liefert "
 					+ "der Einsatz keinen Wertbeitrag."
 				) % [
-					BWLEngine.format_eur(capital_value),
-					BWLEngine.format_eur(annual_fixed),
+					_format_eur(capital_value),
+					_format_eur(annual_fixed),
 				],
 				"questions": [
 					"Was kostet es, die Anlage ein Jahr zu betreiben – und was bringt sie?",
@@ -453,7 +459,7 @@ func _analyze_investments(machines: Array[MachineInstance]) -> Array:
 				],
 				"lesson": (
 					"Der Kapitalwert ist der Jahresbeitrag, den die "
-					+ "Investition gerade noch wert waere. Liegt er unter "
+					+ "Investition gerade noch wert wäre. Liegt er unter "
 					+ "den Fixkosten, verbrennt die Anlage Kapital."
 				),
 				"action": "Prüfe die Auslastung im Produktionsbereich.",
@@ -499,7 +505,7 @@ func _analyze_material_type(
 	if coverage < lead_time:
 		var in_transit: float = sim.material_in_transit(material_type)
 		var body := (
-			"Der %s-Bestand reicht noch %d Tage. Die Lieferzeit betraegt "
+			"Der %s-Bestand reicht noch %d Tage. Die Lieferzeit beträgt "
 			+ "%d Tage. Ohne Nachbestellung stoppt die Produktion in %d Tagen."
 		) % [label, int(coverage), lead_time, int(coverage)]
 		if in_transit > 0.0:
@@ -613,8 +619,8 @@ func _analyze_contracts(sim: SimulationEngine) -> Array:
 					+ "damit bares Geld."
 				) % [
 					String(contract.get("customer", "Vertrag")),
-					_format_eur(price),
-					_format_eur(unit_var),
+					_format_eur(price, 2),
+					_format_eur(unit_var, 2),
 				],
 				"questions": [
 					"Wie viel verliert das Unternehmen an jedem Stück?",
@@ -637,8 +643,8 @@ func _analyze_contracts(sim: SimulationEngine) -> Array:
 					+ "gebundene Kapazität wäre am Markt mehr wert."
 				) % [
 					String(contract.get("customer", "Vertrag")),
-					_format_eur(contract_db),
-					_format_eur(db),
+					_format_eur(contract_db, 2),
+					_format_eur(db, 2),
 				],
 				"questions": [
 					"Wie viel Deckungsbeitrag entgeht je Stück gegenüber dem freien Verkauf?",
@@ -777,7 +783,7 @@ func _analyze_orders(sim: SimulationEngine) -> Array:
 				"severity": "warning",
 				"title": "Auftrag unter Deckungsbeitrag",
 				"analysis": "Der Auftrag bringt %s € je Stück, der Deckungsbeitrag liegt aber nur bei %s €. Jede zusätzliche Einheit würde die Fixkosten nicht decken." % [
-					BWLEngine.format_eur(price), BWLEngine.format_eur(db)
+					_format_eur(price, 2), _format_eur(db, 2)
 				],
 				"questions": [
 					"Kannst du den Preis nachverhandeln?",
@@ -811,7 +817,7 @@ func _analyze_lost_orders(sim: SimulationEngine) -> Array:
 		"severity": "warning",
 		"title": "%d Auftrag/Aufträge nicht erfüllt" % cancelled,
 		"analysis": "Die Lieferfrist lief ab, bevor die Menge produziert werden konnte. Bei einer Kapazität von %s Stück p.a. reicht die Produktion nicht für die Nachfrage." % [
-			BWLEngine.format_eur(capacity, 0)
+			_format_int(capacity)
 		],
 		"questions": [
 			"Reicht deine Kapazität für die bestellten Mengen?",
@@ -838,7 +844,7 @@ func _analyze_efficiency(machines: Array[MachineInstance]) -> Array:
 				"severity": "info",
 				"title": "%s: Fixkosten je Stück" % m.spec.display_name,
 				"analysis": "Auf die %d produzierten Stück entfallen %s € zahlungswirksame Fixkosten. Je höher die Auslastung, desto geringer dieser Anteil." % [
-					int(produced), BWLEngine.format_eur(fixed_per_unit)
+					int(produced), _format_eur(fixed_per_unit, 2)
 				],
 				"questions": ["Wie verändert sich der Fixkostenanteil bei doppelter Auslastung?"],
 				"lesson": "Fixkosten bleiben absolut konstant – ihre Verteilung auf die Stückzahl sinkt mit steigender Auslastung.",
@@ -896,7 +902,7 @@ func _analyze_deliveries(sim: SimulationEngine) -> Array:
 		"severity": "info" if oldest_days < 60 else "warning",
 		"title": "%d Maschine(n) noch nicht betriebsbereit" % pending_count,
 		"analysis": "Für %s € Anschaffungswert ist Kapital gebunden, das noch keine Produktion bringt. Die letzte Maschine ist %s und %d Tage alt." % [
-			BWLEngine.format_eur(pending_value), status_text, oldest_days
+			_format_eur(pending_value), status_text, oldest_days
 		],
 		"questions": [
 			"Wann genau wird die Maschine kapazitätswirksam?",
@@ -932,7 +938,7 @@ func _analyze_capital_binding(sim: SimulationEngine, machines: Array[MachineInst
 		"severity": "info",
 		"title": "Kapitalbindung je Kapazitätseinheit",
 		"analysis": "Auf dem Anlagevermögen von %s € entfallen %s € je Kapazitätseinheit. Das ist die Investition, die eine zusätzliche Einheit Kapazität kostet – noch ohne laufende Fixkosten." % [
-			BWLEngine.format_eur(economy.fixed_assets), BWLEngine.format_eur(asset_per_capacity)
+			_format_eur(economy.fixed_assets), _format_eur(asset_per_capacity)
 		],
 		"questions": [
 			"Steigt dieser Wert, wenn du eine weitere Maschine kaufst?",
@@ -991,7 +997,7 @@ func _analyze_next_steps(sim: SimulationEngine, machines: Array[MachineInstance]
 			"id": "next_step_utilization",
 			"severity": "info",
 			"title": "Nächster Schritt: Auslastung erhöhen",
-			"analysis": "Deine Anlagen laufen zu %d %% Auslastung. Bevor du investierst, lohnt sich zuerst die vorhandene Kapazitaet: Ziel sind 80 %% Auslastung, also %s Stueck statt %s. Das kostet nichts und bringt Deckungsbeitrag auf die bereits bezahlten Fixkosten." % [
+			"analysis": "Deine Anlagen laufen zu %d %% Auslastung. Bevor du investierst, lohnt sich zuerst die vorhandene Kapazität: Ziel sind 80 %% Auslastung, also %s Stück statt %s. Das kostet nichts und bringt Deckungsbeitrag auf die bereits bezahlten Fixkosten." % [
 				int(utilization),
 				_format_int(target_quantity),
 				_format_int(current_quantity),
@@ -1000,8 +1006,8 @@ func _analyze_next_steps(sim: SimulationEngine, machines: Array[MachineInstance]
 				"Welche Anlage hat die höchste Kapazität bei den geringsten Fixkosten?",
 				"Welche Kundenaufträge lehnt dein Betrieb bisher ab?",
 			],
-			"lesson": "Fixkosten fallen auch bei leerer Halle an: Sie sind beschäftigungsunabhaengig, aber nicht sunkener Kosten. Erst die vorhandene Kapazitaet zu nutzen ist immer die guenstigste Investition.",
-			"action": "Pruefe deine offenen Angebote und stelle die Auftragsannahme auf aktiv.",
+			"lesson": "Fixkosten fallen auch bei leerer Halle an: Sie sind beschäftigungsunabhängig, aber keine versunkenen Kosten. Erst die vorhandene Kapazität zu nutzen ist immer die günstigste Investition.",
+			"action": "Prüfe deine offenen Angebote und stelle die Auftragsannahme auf aktiv.",
 		})
 		return out
 
@@ -1022,8 +1028,8 @@ func _analyze_next_steps(sim: SimulationEngine, machines: Array[MachineInstance]
 					"Welche Zahlung kommt in den nächsten Wochen herein?",
 					"Was bindet dein Kapital – Lagerbestand oder Forderungen?",
 				],
-				"lesson": "Eine Investition, die du nicht finanzieren kannst, bringt dir keinen Deckungsbeitrag. Liquiditaet ist die Voraussetzung fuer Investition.",
-				"action": "Oeffne die Finanzierung und pruefe, ob ein Kredit deine Reserve schont.",
+				"lesson": "Eine Investition, die du nicht finanzieren kannst, bringt dir keinen Deckungsbeitrag. Liquidität ist die Voraussetzung für Investition.",
+				"action": "Öffne die Finanzierung und prüfe, ob ein Kredit deine Reserve schont.",
 			})
 			return out
 
@@ -1070,17 +1076,17 @@ func _analyze_next_steps(sim: SimulationEngine, machines: Array[MachineInstance]
 		"id": "next_step_investment",
 		"severity": "info",
 		"title": "Nächster Schritt: Kapazität erweitern",
-		"analysis": "Auslastung und Liquiditaet passen. Jetzt lohnt sich eine weitere Anlage: '%s' erreicht bei voller Auslastung den besten Kapitalwert im Verhaeltnis zum Kapitaleinsatz (%s Euro bei %s Euro Investition). Vergleiche die Investitionen, bevor du dich entscheidest." % [
+		"analysis": "Auslastung und Liquidität passen. Jetzt lohnt sich eine weitere Anlage: '%s' erreicht bei voller Auslastung den besten Kapitalwert im Verhältnis zum Kapitaleinsatz (%s Euro bei %s Euro Investition). Vergleiche die Investitionen, bevor du dich entscheidest." % [
 			best_name,
-			BWLEngine.format_eur(best_npv),
-			BWLEngine.format_eur(best_npv / best_ratio) if best_ratio > 0.0 else "-",
+			_format_eur(best_npv),
+			_format_eur(best_npv / best_ratio) if best_ratio > 0.0 else "-",
 		],
 		"questions": [
-			"Welche Anlage hat den hoechsten Kapitalwert?",
-			"Wie viel Kapital bindest du dafuer – und wie lange?",
+			"Welche Anlage hat den höchsten Kapitalwert?",
+			"Wie viel Kapital bindest du dafür – und wie lange?",
 		],
-		"lesson": "Eine Investition schafft Wert, wenn ihr Kapitalwert ihre Anschaffung uebersteigt. Der Kapitalwert ist der Barwert der erwarteten Cashflows.",
-		"action": "Oeffne die Investitionsentscheidung und vergleiche die Kapitalwerte.",
+		"lesson": "Eine Investition schafft Wert, wenn ihr Kapitalwert ihre Anschaffung übersteigt. Der Kapitalwert ist der Barwert der erwarteten Cashflows.",
+		"action": "Öffne die Investitionsentscheidung und vergleiche die Kapitalwerte.",
 	})
 	return out
 
@@ -1111,7 +1117,7 @@ func _analyze_production_chain(sim: SimulationEngine, machines: Array[MachineIns
 			"id": "chain_missing_stage_%s" % m.spec.id,
 			"severity": "warning",
 			"title": "Zulieferer fehlt: %s steht still" % m.spec.display_name,
-			"analysis": "'%s' verbraucht %s je Einheit, aber keine Anlage im Betrieb liefert dieses Zwischenprodukt. Die Anlage laeuft im Leerlauf – ihre Fixkosten fallen an, ohne dass Ware entsteht." % [
+			"analysis": "'%s' verbraucht %s je Einheit, aber keine Anlage im Betrieb liefert dieses Zwischenprodukt. Die Anlage läuft im Leerlauf – ihre Fixkosten fallen an, ohne dass Ware entsteht." % [
 				m.spec.display_name, String(m.spec.input_product)
 			],
 			"questions": [
@@ -1119,7 +1125,7 @@ func _analyze_production_chain(sim: SimulationEngine, machines: Array[MachineIns
 				"Verdient sich diese Vorstufe, wenn die Endstufe stillsteht?",
 			],
 			"lesson": "In einer Produktionskette begrenzt die langsamste Stufe das Ergebnis. Fehlt eine Stufe, zahlt man deren Fixkosten ohne Gegenwert.",
-			"action": "Pruefe im Maschinenkatalog, welche Anlage das Zwischenprodukt herstellt.",
+			"action": "Prüfe im Maschinenkatalog, welche Anlage das Zwischenprodukt herstellt.",
 		})
 		return out
 
@@ -1149,15 +1155,15 @@ func _analyze_production_chain(sim: SimulationEngine, machines: Array[MachineIns
 				"id": "chain_backlog_%s" % product,
 				"severity": "info",
 				"title": "Rückstau im Zwischenlager: %s" % String(product),
-				"analysis": "Im Zwischenlager liegen %s Stueck %s. Das ist mehr als ein Tagesbedarf (%s Stueck). Die Vorstufe produziert schneller, als die Endstufe abnimmt – das bindet Kapital ohne Mehrwert." % [
+				"analysis": "Im Zwischenlager liegen %s Stück %s. Das ist mehr als ein Tagesbedarf (%s Stück). Die Vorstufe produziert schneller, als die Endstufe abnimmt – das bindet Kapital ohne Mehrwert." % [
 					_format_int(stock), String(product), _format_int(daily_demand)
 				],
 				"questions": [
 					"Lohnt es sich, die Vorstufe zu erweitern?",
 					"Welche Stufe ist wirtschaftlich der Engpass?",
 				],
-				"lesson": "Zwischenprodukte binden Kapital, ohne Erloes zu bringen. Ein wachsender Lagerbestand zeigt eine Verklemmung in der Kette.",
-				"action": "Pruefe, welche Stufe du erweitern willst.",
+				"lesson": "Zwischenprodukte binden Kapital, ohne Erlös zu bringen. Ein wachsender Lagerbestand zeigt eine Verklemmung in der Kette.",
+				"action": "Prüfe, welche Stufe du erweitern willst.",
 			})
 			return out
 	return out
@@ -1198,30 +1204,30 @@ func _analyze_demand_vs_capacity(sim: SimulationEngine, machines: Array[MachineI
 			"id": "demand_over_capacity",
 			"severity": "warning",
 			"title": "Nachfrage größer als Kapazität",
-			"analysis": "Offene Auftraege und Rahmenvertraege ergeben %s Stueck Bedarf – deine Endstufen schaffen %s Stueck. Du kannst nicht alles bedienen: Der Markt sieht, dass du zu langsam bist." % [
+			"analysis": "Offene Aufträge und Rahmenverträge ergeben %s Stück Bedarf – deine Endstufen schaffen %s Stück. Du kannst nicht alles bedienen: Der Markt sieht, dass du zu langsam bist." % [
 				_format_int(demand), _format_int(capacity)
 			],
 			"questions": [
-				"Welche Anlage erweitert die Kapazitaet am guenstigsten?",
-				"Wie viel Deckungsbeitrag bringt die zusaetzliche Menge?",
+				"Welche Anlage erweitert die Kapazität am günstigsten?",
+				"Wie viel Deckungsbeitrag bringt die zusätzliche Menge?",
 			],
-			"lesson": "Kapazitaetsengpaesse kosten Umsatz, den man nicht sieht: Der Auftrag geht an den Wettbewerb.",
-			"action": "Pruefe deine Auslastung und vergleiche eine Erweiterungsinvestition.",
+			"lesson": "Kapazitätsengpässe kosten Umsatz, den man nicht sieht: Der Auftrag geht an den Wettbewerb.",
+			"action": "Prüfe deine Auslastung und vergleiche eine Erweiterungsinvestition.",
 		})
 	elif capacity > 0.0 and demand > 0.0 and demand < capacity * 0.5:
 		out.append({
 			"id": "capacity_over_demand",
 			"severity": "warning",
 			"title": "Kapazität größer als Nachfrage",
-			"analysis": "Deine Endstufen schaffen %s Stueck im Jahr, der Markt fragt aber nur %s Stueck nach. Die Fixkosten dieser Kapazitaet stehen einem Ertrag von %s Stueck gegenueber." % [
+			"analysis": "Deine Endstufen schaffen %s Stück im Jahr, der Markt fragt aber nur %s Stück nach. Die Fixkosten dieser Kapazität stehen einem Ertrag von %s Stück gegenüber." % [
 				_format_int(capacity), _format_int(demand), _format_int(demand)
 			],
 			"questions": [
 				"Ab welcher Menge ist die Investition rentabel?",
-				"Kannst du die freie Kapazitaet mit einem anderen Produkt fuellen?",
+				"Kannst du die freie Kapazität mit einem anderen Produkt füllen?",
 			],
-			"lesson": "Kapazitaet ist kein Ziel, sondern eine Voraussetzung. Zu viel Kapazitaet bedeutet Fixkosten ohne Deckungsbeitrag.",
-			"action": "Pruefe deine Auslastung und ueberlege, eine Anlage stillzulegen.",
+			"lesson": "Kapazität ist kein Ziel, sondern eine Voraussetzung. Zu viel Kapazität bedeutet Fixkosten ohne Deckungsbeitrag.",
+			"action": "Prüfe deine Auslastung und überlege, eine Anlage stillzulegen.",
 		})
 	return out
 

@@ -363,7 +363,7 @@ static func _task_balance(s: Snapshot) -> Task:
 		Field.new("passiva", "Summe Passiva", liabilities, "€", 1.0),
 	]
 	t.solution = (
-		"Die Aktiva summe sich auf %s €, die Passiva auf %s €. Die Bilanz "
+		"Die Aktiva summieren sich auf %s €, die Passiva auf %s €. Die Bilanz "
 		% [_format_eur(assets), _format_eur(liabilities)]
 		+ "geht auf."
 	)
@@ -467,9 +467,12 @@ static func _format_int(value: float) -> String:
 	return ("-" if negative else "") + grouped
 
 
-## Formatiert einen Geldbetrag.
+## Formatiert einen Geldbetrag - OHNE Waehrungszeichen.
+##
+## Jedes Aufgaben-Template schreibt sein "€" selbst. Haengt der
+## Formatierer es zusaetzlich an, steht "25.000 € €" im Aufgabentext.
 static func _format_eur(value: float) -> String:
-	return "%s €" % _format_int(value)
+	return _format_int(value)
 
 
 ## Formatiert eine Kilogramm-Menge.

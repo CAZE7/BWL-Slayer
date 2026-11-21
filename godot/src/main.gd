@@ -963,7 +963,7 @@ func _machine_card(m: MachineInstance, selected: bool) -> Control:
 		)
 		v.add_child(_metric_row("Stufe", "Endstufe · verarbeitet %s" % String(m.spec.input_product)))
 		v.add_child(_metric_row("Zulieferung", "%s Stück/Tag nötig" % String.num(daily_need, 1)))
-		v.add_child(_metric_row("Im Zwischenlager", "%s Stück" % String.num(input_stock, 0)))
+		v.add_child(_metric_row("Im Zwischenlager", "%s Stück" % BWLEngine.format_number(input_stock)))
 		# Fehlt die Zulieferung, steht die Anlage still. Das muss
 		# hier sichtbar sein, nicht nur als Symbol auf dem Gelände.
 		if m.is_operational() and input_stock < daily_need:
@@ -1155,7 +1155,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 
 	var eco := Simulation.economy
 	var label := Label.new()
-	label.text = "Materialbestand: %s kg" % String.num(Simulation.inventory_material, 0)
+	label.text = "Materialbestand: %s kg" % BWLEngine.format_number(Simulation.inventory_material)
 	label.add_theme_font_size_override("font_size", 12)
 	box.add_child(label)
 
@@ -1183,7 +1183,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 
 			var cover := Label.new()
 			cover.text = "Bestand %s kg · Bedarf %s kg/Tag · Reichweite %d Tage" % [
-				String.num(stock, 0),
+				BWLEngine.format_number(stock),
 				String.num(daily_need, 1),
 				int(cover_days),
 			]
@@ -1198,7 +1198,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 			var in_transit: float = Simulation.material_in_transit(material_type)
 			if in_transit > 0.0:
 				var transit_label := Label.new()
-				transit_label.text = "Auf dem Weg: %s kg" % String.num(in_transit, 0)
+				transit_label.text = "Auf dem Weg: %s kg" % BWLEngine.format_number(in_transit)
 				transit_label.add_theme_font_size_override("font_size", 11)
 				transit_label.add_theme_color_override("font_color", UI["accent"])
 				box.add_child(transit_label)
@@ -1241,7 +1241,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 
 			var row := Label.new()
 			row.text = "%s: %s Stück" % [
-				String(product).capitalize(), String.num(stock, 0)
+				String(product).capitalize(), BWLEngine.format_number(stock)
 			]
 			row.add_theme_font_size_override("font_size", 12)
 			row.add_theme_color_override("font_color", UI["text"])
@@ -1280,7 +1280,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 	var finished: float = Simulation.finished_goods
 	if finished >= 1.0:
 		var fg_row := Label.new()
-		fg_row.text = "Fertigwaren: %s Stück" % String.num(finished, 0)
+		fg_row.text = "Fertigwaren: %s Stück" % BWLEngine.format_number(finished)
 		fg_row.add_theme_font_size_override("font_size", 12)
 		fg_row.add_theme_color_override("font_color", UI["text"])
 		box.add_child(fg_row)
@@ -1301,7 +1301,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 		buy_row.add_theme_constant_override("separation", 6)
 		for amount in [500.0, 2000.0, 10000.0]:
 			var button := Button.new()
-			button.text = "+ %s kg" % String.num(amount, 0)
+			button.text = "+ %s kg" % BWLEngine.format_number(amount)
 			button.custom_minimum_size = Vector2(0, 30)
 			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			button.tooltip_text = "Sofort kaufen – die Ware ist sofort im Lager."
@@ -1332,7 +1332,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 			)
 			if not bool(result.get("ok", false)):
 				EventBus.notify(
-					"Bestellung nicht moeglich",
+					"Bestellung nicht möglich",
 					String(result.get("error", "Die Bestellung wurde abgelehnt.")),
 					"warning"
 				)
@@ -1342,7 +1342,7 @@ func _fill_storage(box: VBoxContainer) -> void:
 		box.add_child(order_row)
 
 	var price := Label.new()
-	price.text = "Materialpreis: %s €/kg · Lieferzeit %d Tage" % [
+	price.text = "Materialpreis: %s/kg · Lieferzeit %d Tage" % [
 		BWLEngine.format_eur(Simulation.material_price(), 2),
 		Simulation.MATERIAL_LEAD_TIME_DAYS,
 	]
@@ -1478,14 +1478,14 @@ func _fill_finance(box: VBoxContainer) -> void:
 			if not bool(result.get("ok", false)):
 				EventBus.notify(
 					"Kredit abgelehnt",
-					String(result.get("error", "Die Bank gewaehrt keinen Kredit.")),
+					String(result.get("error", "Die Bank gewährt keinen Kredit.")),
 					"warning"
 				)
 			_refresh_sidebar()
 		)
 		box.add_child(loan)
 	else:
-		box.add_child(_muted("Kein Kreditrahmen. Die Bank gewaehrt kein weiteres Fremdkapital."))
+		box.add_child(_muted("Kein Kreditrahmen. Die Bank gewährt kein weiteres Fremdkapital."))
 
 	# --- Darlehen mit Tilgungsplan --------------------------------
 	_add_section(box, "DARLEHEN MIT TILGUNGSPLAN")
@@ -1623,7 +1623,7 @@ func _fill_finance(box: VBoxContainer) -> void:
 	# --- Kapitalerhoehung: Aussenfinanzierung ueber junge Aktien ----
 	_add_section(box, "KAPITALERHÖHUNG (BEZUGSRECHT)")
 	var share_price: float = Simulation.current_share_price()
-	_add_metric(box, "Aktien im Umlauf", String.num(Simulation.shares_outstanding, 0))
+	_add_metric(box, "Aktien im Umlauf", BWLEngine.format_number(Simulation.shares_outstanding))
 	_add_metric(box, "Rechnerischer Kurs", BWLEngine.format_eur(share_price, 2))
 	if share_price > 1.0:
 		# Standardkondition: Bezugsverhaeltnis 4:1, Ausgabekurs
@@ -1633,10 +1633,10 @@ func _fill_finance(box: VBoxContainer) -> void:
 		var issue_price: float = share_price * 0.80
 		var planned_shares: float = Simulation.shares_outstanding / 4.0
 		box.add_child(_muted(
-			"4:1 zu %s €: %s junge Aktien, Zufluss %s. Der Kurs fällt "
+			"4:1 zu %s: %s junge Aktien, Zufluss %s. Der Kurs fällt "
 			% [
 				BWLEngine.format_eur(issue_price, 2),
-				String.num(planned_shares, 0),
+				BWLEngine.format_number(planned_shares),
 				BWLEngine.format_eur(planned_shares * issue_price, 0),
 			]
 			+ "auf den Mischkurs; das Bezugsrecht gleicht den Altaktionären "
@@ -1703,8 +1703,8 @@ func _fill_finance(box: VBoxContainer) -> void:
 			contract_box.add_child(head)
 
 			var details := Label.new()
-			details.text = "%s Stück p.a. zu %s € · Restlaufzeit %d Jahre" % [
-				BWLEngine.format_eur(float(contract.get("quantity_per_year", 0.0)), 0),
+			details.text = "%s Stück p.a. zu %s · Restlaufzeit %d Jahre" % [
+				BWLEngine.format_number(float(contract.get("quantity_per_year", 0.0))),
 				BWLEngine.format_eur(float(contract.get("price_per_unit", 0.0)), 2),
 				int(contract.get("years_remaining", 0)),
 			]
@@ -1729,8 +1729,8 @@ func _fill_finance(box: VBoxContainer) -> void:
 				var result := Simulation.terminate_contract(String(contract.get("id", "")))
 				if not bool(result.get("ok", false)):
 					EventBus.notify(
-						"Kündigung nicht moeglich",
-						String(result.get("error", "Die Kuendigung wurde abgelehnt.")),
+						"Kündigung nicht möglich",
+						String(result.get("error", "Die Kündigung wurde abgelehnt.")),
 						"warning"
 					)
 				_refresh_sidebar()
@@ -1739,7 +1739,7 @@ func _fill_finance(box: VBoxContainer) -> void:
 			box.add_child(contract_box)
 
 		_add_metric(box, "Gesicherte Menge p.a.",
-			BWLEngine.format_eur(Simulation.contracted_quantity(), 0))
+			"%s Stück" % BWLEngine.format_number(Simulation.contracted_quantity()))
 		_add_metric(box, "Gesicherter Deckungsbeitrag p.a.",
 			BWLEngine.format_eur(Simulation.contracted_margin(), 0))
 
@@ -1765,7 +1765,7 @@ func _fill_finance(box: VBoxContainer) -> void:
 		var offer_price: float = maxf(market_price * 0.92, unit_var * 1.05)
 
 		var contract_button := Button.new()
-		contract_button.text = "Vertrag: 30 %% der Kapazität, 3 Jahre"
+		contract_button.text = "Vertrag: 30 % der Kapazität, 3 Jahre"
 		contract_button.custom_minimum_size = Vector2(0, 30)
 		contract_button.tooltip_text = (
 			"Mindestmenge zu festem Preis: %s je Stück (Marktpreis mit "
@@ -1782,7 +1782,7 @@ func _fill_finance(box: VBoxContainer) -> void:
 			)
 			if not bool(result.get("ok", false)):
 				EventBus.notify(
-					"Vertrag nicht moeglich",
+					"Vertrag nicht möglich",
 					String(result.get("error", "Der Vertrag wurde abgelehnt.")),
 					"warning"
 				)
@@ -1969,7 +1969,7 @@ func _advisor_card(finding: Dictionary) -> Control:
 func _fill_stats(box: VBoxContainer) -> void:
 	var eco := Simulation.economy
 
-	_add_section(box, "RENTABILITAET")
+	_add_section(box, "RENTABILITÄT")
 	_add_metric(box, "Gesamtkapitalrendite", BWLEngine.format_pct(eco.roic_percent(), 1))
 	_add_metric(box, "EK-Rentabilität", BWLEngine.format_pct(eco.roe_percent(), 1))
 

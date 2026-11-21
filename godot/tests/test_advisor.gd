@@ -416,6 +416,12 @@ static func _test_financing_findings(t: TestFramework) -> void:
 		"Befundtext nennt den Kreditrahmen",
 		unused_text.contains("€")
 	)
+	# Der Formatierer haengt KEIN Waehrungszeichen mehr an - das
+	# macht das Template. Beide zusammen ergaeben "25.000 € €".
+	t.check_true(
+		"Befundtext ohne doppeltes Waehrungszeichen",
+		not unused_text.contains("€ €")
+	)
 
 	# Fall 2: Hohe Verschuldung -> Leverage-Warnung, ebenfalls
 	# vollstaendig formatiert.
@@ -429,4 +435,8 @@ static func _test_financing_findings(t: TestFramework) -> void:
 	t.check_true(
 		"Leverage-Befund vollstaendig formatiert",
 		not leverage_text.contains("%s")
+	)
+	t.check_true(
+		"Leverage-Befund ohne doppeltes Waehrungszeichen",
+		not leverage_text.contains("€ €")
 	)

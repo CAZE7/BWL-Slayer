@@ -345,10 +345,16 @@ static func _test_company_lab(t: TestFramework) -> void:
 			String(task.given), String(task.hint),
 		]
 		var fully_formatted := true
+		var no_double_unit := true
 		for text in texts:
 			if text.contains("%s") or text.contains("%.1f") or text.contains("%d"):
 				fully_formatted = false
+			# "25.000 € €" hiesse: der Formatierer UND das Template
+			# haben beide ein Waehrungszeichen angehaengt.
+			if text.contains("€ €") or text.contains("€€"):
+				no_double_unit = false
 		t.check_true("Aufgabe '%s' vollstaendig formatiert" % task.id, fully_formatted)
+		t.check_true("Aufgabe '%s' ohne doppeltes Waehrungszeichen" % task.id, no_double_unit)
 
 	# Die Deckungsbeitragsaufgabe muss exakt zur Simulation passen.
 	var found := false

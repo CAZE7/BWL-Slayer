@@ -17,8 +17,47 @@ static func run(t: TestFramework) -> void:
 	t.suite("BWL-Engine · Finanzierung")
 	_test_financing(t)
 	t.suite("BWL-Engine · Aktienbewertung")
+	_test_stocks(t)
 	t.suite("BWL-Engine · Grenzwerte")
 	_test_edge_cases(t)
+	t.suite("BWL-Engine · Zahlformatierung")
+	_test_formatting(t)
+
+
+# ------------------------------------------------------------------
+# Deutsche Zahlformatierung: Tausenderpunkt, Dezimalkomma.
+# Die Oberflaeche haengt komplett an diesen Helfern - ein Fehler
+# hier steht sofort in jeder Ansicht.
+# ------------------------------------------------------------------
+static func _test_formatting(t: TestFramework) -> void:
+	t.check_true(
+		"format_number gruppiert Tausender",
+		BWLEngine.format_number(1234567.0) == "1.234.567"
+	)
+	t.check_true(
+		"format_number: fuenf Stellen",
+		BWLEngine.format_number(50000.0) == "50.000"
+	)
+	t.check_true(
+		"format_number: unter Tausend ohne Punkt",
+		BWLEngine.format_number(999.0) == "999"
+	)
+	t.check_true(
+		"format_number: Dezimalkomma",
+		BWLEngine.format_number(1234.25, 2) == "1.234,25"
+	)
+	t.check_true(
+		"format_eur: Betrag mit Einheit",
+		BWLEngine.format_eur(50000.0, 0) == "50.000 €"
+	)
+	t.check_true(
+		"format_eur: negativer Betrag",
+		BWLEngine.format_eur(-1234.0, 0) == "-1.234 €"
+	)
+	t.check_true(
+		"format_eur: kein Minus bei gerundeter Null",
+		BWLEngine.format_eur(-0.0001, 0) == "0 €"
+	)
 
 
 # ------------------------------------------------------------------

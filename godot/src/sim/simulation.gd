@@ -649,7 +649,7 @@ func sign_contract(
 	if capacity > 0.0 and quantity_per_year > capacity * 1.5:
 		return {
 			"ok": false,
-			"error": "Die Mindestmenge von %s Stueck liegt ueber der Kapazitaet von %s Stueck." % [
+			"error": "Die Mindestmenge von %s Stück liegt über der Kapazität von %s Stück." % [
 				_format_int(quantity_per_year), _format_int(capacity)
 			],
 		}
@@ -669,7 +669,7 @@ func sign_contract(
 	contracts.append(contract)
 	EventBus.notify(
 		"Vertrag geschlossen",
-		"%s: %s Stueck p.a. zu %s €, Laufzeit %d Jahre." % [
+		"%s: %s Stück p.a. zu %s €, Laufzeit %d Jahre." % [
 			contract["customer"],
 			_format_int(quantity_per_year),
 			_format_int(price_per_unit),
@@ -703,7 +703,7 @@ func terminate_contract(contract_id: String) -> Dictionary:
 	if fee > 0.0 and economy.cash < fee:
 		return {
 			"ok": false,
-			"error": "Die Kuendigungsgebuehr von %s € kann nicht bezahlt werden." % _format_int(fee),
+			"error": "Die Kündigungsgebühr von %s € kann nicht bezahlt werden." % _format_int(fee),
 		}
 	if fee > 0.0:
 		economy.move_cash(-fee)
@@ -712,8 +712,8 @@ func terminate_contract(contract_id: String) -> Dictionary:
 	# zahlt die Gebuehr und der Vertrag bleibt trotzdem bestehen.
 	contracts.erase(contract)
 	EventBus.notify(
-		"Vertrag gekuendigt",
-		"Die Kuendigungsgebuehr betraegt %s €." % _format_int(fee),
+		"Vertrag gekündigt",
+		"Die Kündigungsgebühr beträgt %s €." % _format_int(fee),
 		"warning"
 	)
 	return {"ok": true, "fee": fee}
@@ -1613,7 +1613,7 @@ func _close_business_year() -> void:
 		if paid < principal_due - 0.005:
 			EventBus.notify(
 				"Tilgung nicht gedeckt",
-				"Fuer %s fehlte die Liquiditaet: %s € Tilgung blieben offen." % [
+				"Für %s fehlte die Liquidität: %s € Tilgung blieben offen." % [
 					loan_label(String(loan.get("kind", ""))),
 					_format_int(principal_due - paid),
 				],
@@ -1626,7 +1626,7 @@ func _close_business_year() -> void:
 		loans.erase(loan)
 		EventBus.notify(
 			"Darlehen getilgt",
-			"%s ueber %s € ist vollstaendig zurueckgezahlt." % [
+			"%s über %s € ist vollständig zurückgezahlt." % [
 				loan_label(String(loan.get("kind", ""))),
 				_format_int(float(loan.get("principal", 0.0))),
 			],
@@ -1679,7 +1679,7 @@ func _close_business_year() -> void:
 			economy.dividend_current_year += planned_dividend
 			EventBus.notify(
 				"Dividende beschlossen",
-				"%s € Ausschuettung (%s %% des Jahresueberschusses)." % [
+				"%s € Ausschüttung (%s %% des Jahresüberschusses)." % [
 					_format_int(planned_dividend),
 					"%.0f" % (economy.dividend_policy_ratio * 100.0),
 				],
@@ -1863,7 +1863,7 @@ func take_loan(amount: float, rate: float = -1.0) -> Dictionary:
 	if amount > limit:
 		return {
 			"ok": false,
-			"error": "Die Bank gewaehrt hoechstens %s € (Eigenkapitalquote %s, Fremdkapitalquote %s)." % [
+			"error": "Die Bank gewährt höchstens %s € (Eigenkapitalquote %s, Fremdkapitalquote %s)." % [
 				_format_int(limit),
 				"%.0f %%" % (equity_ratio() * 100.0),
 				"%.0f %%" % (debt_ratio() * 100.0),
@@ -1880,7 +1880,7 @@ func take_loan(amount: float, rate: float = -1.0) -> Dictionary:
 	EventBus.economy_changed.emit(economy.to_dict())
 	EventBus.notify(
 		"Kredit aufgenommen",
-		"%s € zu %s %% Zins. Die Liquiditaet steigt, das Fremdkapital "
+		"%s € zu %s %% Zins. Die Liquidität steigt, das Fremdkapital "
 		% [_format_int(amount), "%.1f" % (economy.debt_rate * 100.0)]
 		+ "belastet die Bilanz.",
 		"info"
@@ -1916,7 +1916,7 @@ func take_structured_loan(
 	if amount > limit:
 		return {
 			"ok": false,
-			"error": "Die Bank gewaehrt hoechstens %s €." % _format_int(limit),
+			"error": "Die Bank gewährt höchstens %s €." % _format_int(limit),
 		}
 
 	var loan_rate := rate if rate >= 0.0 else _interest_rate_for(debt_ratio())
@@ -2037,7 +2037,7 @@ func set_repayment_share(share: float) -> Dictionary:
 ## beschlossen; Verlustjahre schuetten nichts aus.
 func set_dividend_policy(ratio: float) -> Dictionary:
 	if ratio < 0.0 or ratio > 1.0:
-		return {"ok": false, "error": "Die Ausschuettungsquote muss zwischen 0 und 100 % liegen."}
+		return {"ok": false, "error": "Die Ausschüttungsquote muss zwischen 0 und 100 % liegen."}
 	economy.dividend_policy_ratio = ratio
 	EventBus.economy_changed.emit(economy.to_dict())
 	return {"ok": true, "ratio": ratio}
@@ -2270,7 +2270,7 @@ func capital_increase(ratio_old_per_new: float, issue_price: float) -> Dictionar
 		return {"ok": false, "error": "Der Ausgabekurs muss positiv sein."}
 	var old_price := current_share_price()
 	if old_price <= 0.0:
-		return {"ok": false, "error": "Ohne Eigenkapital ist keine Kapitalerhoehung platzierbar."}
+		return {"ok": false, "error": "Ohne Eigenkapital ist keine Kapitalerhöhung platzierbar."}
 	if issue_price >= old_price:
 		return {
 			"ok": false,
