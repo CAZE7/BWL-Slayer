@@ -108,6 +108,7 @@ static func run(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_basic_findings(t: TestFramework) -> void:
 	var advisor := _advisor()
+	t.track(advisor)
 	t.check_true("Berater laesst sich instanziieren", advisor != null)
 	if advisor == null:
 		return
@@ -123,6 +124,7 @@ static func _test_basic_findings(t: TestFramework) -> void:
 	# Auslastung zu gering: der Berater muss die Kennzahl nennen.
 	var spec := _basic_spec()
 	var sim := _make_sim(spec)
+	t.track(sim)
 	# Die Anlage hat noch nichts produziert: Auslastung 0 %.
 	var low: Array = advisor._analyze_utilization(sim.active_machines())
 	var finding := _find(low, "low_utilization")
@@ -135,6 +137,7 @@ static func _test_basic_findings(t: TestFramework) -> void:
 	# Auslastung zu hoch: Kapazitätsgrenze.
 	var full := spec.with_overrides({"capacity_units_per_year": 10_000.0})
 	var sim2 := _make_sim(full)
+	t.track(sim2)
 	var instance: MachineInstance = sim2.machines["anlage-1"]
 	instance.quantity_this_year = 9_800.0
 	var high: Array = advisor._analyze_utilization(sim2.active_machines())
@@ -173,11 +176,13 @@ static func _test_basic_findings(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_questions_not_answers(t: TestFramework) -> void:
 	var advisor := _advisor()
+	t.track(advisor)
 	t.check_true("Berater laesst sich instanziieren", advisor != null)
 	if advisor == null:
 		return
 	var spec := _basic_spec()
 	var sim := _make_sim(spec)
+	t.track(sim)
 
 	var findings: Array = advisor._analyze_utilization(sim.active_machines())
 	var finding := _find(findings, "low_utilization")
@@ -207,6 +212,7 @@ static func _test_questions_not_answers(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_demand_vs_capacity(t: TestFramework) -> void:
 	var advisor := _advisor()
+	t.track(advisor)
 	t.check_true("Berater laesst sich instanziieren", advisor != null)
 	if advisor == null:
 		return
@@ -214,6 +220,7 @@ static func _test_demand_vs_capacity(t: TestFramework) -> void:
 
 	# Nachfrage übersteigt die Kapazität deutlich.
 	var sim := _make_sim(spec)
+	t.track(sim)
 	sim.orders.append({
 		"id": "gross",
 		"status": "accepted",
@@ -232,6 +239,7 @@ static func _test_demand_vs_capacity(t: TestFramework) -> void:
 
 	# Kapazität übersteigt die Nachfrage deutlich.
 	var sim2 := _make_sim(spec)
+	t.track(sim2)
 	sim2.orders.append({
 		"id": "klein",
 		"status": "accepted",
@@ -246,6 +254,7 @@ static func _test_demand_vs_capacity(t: TestFramework) -> void:
 
 	# Passt die Nachfrage zur Kapazität, gibt es keinen Hinweis.
 	var sim3 := _make_sim(spec)
+	t.track(sim3)
 	sim3.orders.append({
 		"id": "passend",
 		"status": "accepted",
@@ -265,6 +274,7 @@ static func _test_demand_vs_capacity(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_chain_findings(t: TestFramework) -> void:
 	var advisor := _advisor()
+	t.track(advisor)
 	t.check_true("Berater laesst sich instanziieren", advisor != null)
 	if advisor == null:
 		return
@@ -297,6 +307,7 @@ static func _test_chain_findings(t: TestFramework) -> void:
 	# Endstufe ohne Vorstufe: der Berater muss den fehlenden
 	# Zulieferer melden.
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[stage1.id] = stage1
 	sim.specs[stage2.id] = stage2
 	var only_end := MachineInstance.new(stage2, "end-1")
@@ -310,6 +321,7 @@ static func _test_chain_findings(t: TestFramework) -> void:
 
 	# Beide Stufen, aber zu wenig Zwischenprodukt: kein Rueckstau.
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.specs[stage1.id] = stage1
 	sim2.specs[stage2.id] = stage2
 	var producer := MachineInstance.new(stage1, "vor-1")
@@ -339,6 +351,7 @@ static func _test_chain_findings(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_next_steps(t: TestFramework) -> void:
 	var advisor := _advisor()
+	t.track(advisor)
 	t.check_true("Berater laesst sich instanziieren", advisor != null)
 	if advisor == null:
 		return
@@ -346,6 +359,7 @@ static func _test_next_steps(t: TestFramework) -> void:
 
 	# Auslastung zu gering: der Fahrplan nennt die Zielmenge.
 	var sim := _make_sim(spec)
+	t.track(sim)
 	var low: Array = advisor._analyze_next_steps(sim, sim.active_machines())
 	var finding := _find(low, "next_step_utilization")
 	t.check_true(
@@ -363,6 +377,7 @@ static func _test_next_steps(t: TestFramework) -> void:
 
 	# Auslastung passt, aber die Kasse ist zu duenn.
 	var sim2 := _make_sim(spec)
+	t.track(sim2)
 	var instance: MachineInstance = sim2.machines["anlage-1"]
 	instance.quantity_this_year = 9_000.0
 	sim2.economy.cash = 100.0
@@ -374,6 +389,7 @@ static func _test_next_steps(t: TestFramework) -> void:
 
 	# Auslastung und Kasse passen: jetzt erst die Investition.
 	var sim3 := _make_sim(spec)
+	t.track(sim3)
 	var instance3: MachineInstance = sim3.machines["anlage-1"]
 	instance3.quantity_this_year = 9_000.0
 	sim3.economy.cash = 500_000.0
@@ -396,6 +412,7 @@ static func _test_next_steps(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_financing_findings(t: TestFramework) -> void:
 	var advisor := _advisor()
+	t.track(advisor)
 	if advisor == null:
 		return
 	advisor.reset()
@@ -404,6 +421,7 @@ static func _test_financing_findings(t: TestFramework) -> void:
 	# Hinweis auf ungenutzten Kreditrahmen muss sauber formatiert
 	# sein (hier sass der Fehler).
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	var unused: Array = advisor._analyze_financing(sim)
 	var unused_finding := _find(unused, "financing_unused_capacity")
 	t.check_true("Ungenutzter Kreditrahmen wird erkannt", not unused_finding.is_empty())
@@ -426,6 +444,7 @@ static func _test_financing_findings(t: TestFramework) -> void:
 	# Fall 2: Hohe Verschuldung -> Leverage-Warnung, ebenfalls
 	# vollstaendig formatiert.
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.economy.debt = 60_000.0
 	sim2.economy.interest_paid_year = 3_600.0
 	var levered: Array = advisor._analyze_financing(sim2)

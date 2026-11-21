@@ -26,12 +26,14 @@ static func _test_game_state_roundtrip(t: TestFramework) -> void:
 	progress.xp = 480
 
 	var state := GameStateStore.new()
+	t.track(state)
 	state.player_name = "Test CFO"
 	state.progress = progress
 	state.settings["reduced_motion"] = true
 
 	var data := state.to_dict()
 	var restored := GameStateStore.new()
+	t.track(restored)
 	restored.from_dict(data)
 
 	t.check_true("Spielername erhalten", restored.player_name == "Test CFO")
@@ -51,6 +53,7 @@ static func _test_game_state_roundtrip(t: TestFramework) -> void:
 
 	# Die Simulation muss ihren Zustand ebenfalls behalten.
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.day = 137
 	sim.year = 2
 	sim.economy.cash = 43210.0
@@ -61,6 +64,7 @@ static func _test_game_state_roundtrip(t: TestFramework) -> void:
 
 	var sim_data := sim.to_dict()
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.from_dict(sim_data)
 
 	t.check_approx("Tag erhalten", float(sim2.day), 137.0, 0.01)

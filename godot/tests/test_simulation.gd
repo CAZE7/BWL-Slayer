@@ -366,6 +366,7 @@ static func _test_investment_evaluation(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_financing(t: TestFramework) -> void:
 	var sim := SimulationEngine.new()
+	t.track(sim)
 
 	# Ausgangslage: 50.000 € Eigenkapital, kein Fremdkapital.
 	t.check_approx("EK-Quote startet bei 100 %", sim.equity_ratio(), 1.0, 0.0001)
@@ -498,6 +499,7 @@ static func _test_financing(t: TestFramework) -> void:
 static func _test_structured_loans(t: TestFramework) -> void:
 	# --- Annuitaetendarlehen ---------------------------------------
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	var result := sim.take_structured_loan(20_000.0, 4, "ANNUITY", 0.08)
 	t.check_true("Annuitaetendarlehen aufgenommen", bool(result.get("ok", false)))
 	t.check_approx("Fremdkapital = Darlehenssumme", sim.economy.debt, 20_000.0, 0.01)
@@ -557,6 +559,7 @@ static func _test_structured_loans(t: TestFramework) -> void:
 
 	# --- Ratendarlehen: konstante Tilgung --------------------------
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.take_structured_loan(12_000.0, 3, "REDEMPTION", 0.05)
 	sim2._close_business_year()
 	t.check_approx("Ratendarlehen: Tilgung Jahr 1", sim2.economy.repayment_year, 4_000.0, 0.01)
@@ -567,6 +570,7 @@ static func _test_structured_loans(t: TestFramework) -> void:
 
 	# --- Endfaelliges Darlehen: Tilgung erst am Ende ----------------
 	var sim3 := SimulationEngine.new()
+	t.track(sim3)
 	sim3.take_structured_loan(10_000.0, 2, "FEST", 0.06)
 	sim3._close_business_year()
 	t.check_approx("Endfaellig: keine Tilgung im Jahr 1", sim3.economy.repayment_year, 0.0, 0.01)
@@ -583,8 +587,10 @@ static func _test_structured_loans(t: TestFramework) -> void:
 	t.check_true("Laufzeit unter 1 Jahr abgelehnt", not bool(invalid_years.get("ok", false)))
 
 	var sim4 := SimulationEngine.new()
+	t.track(sim4)
 	sim4.take_structured_loan(8_000.0, 5, "REDEMPTION", 0.07)
 	var loaded_sim := SimulationEngine.new()
+	t.track(loaded_sim)
 	loaded_sim.from_dict(sim4.to_dict())
 	t.check_approx(
 		"Darlehen ueberlebt den Spielstand",
@@ -603,6 +609,7 @@ static func _test_structured_loans(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_dividend_policy(t: TestFramework) -> void:
 	var sim := SimulationEngine.new()
+	t.track(sim)
 
 	# Quote setzen und validieren.
 	var ok := sim.set_dividend_policy(0.4)
@@ -628,6 +635,7 @@ static func _test_dividend_policy(t: TestFramework) -> void:
 
 	# Ein Verlustjahr schuettet nichts aus.
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.set_dividend_policy(0.5)
 	sim2.economy.costs_current_year += 2_000.0
 	sim2.economy.costs_total += 2_000.0
@@ -649,6 +657,7 @@ static func _test_financial_tools(t: TestFramework) -> void:
 	# --- Finanzplan -------------------------------------------------
 	var spec := _make_spec(&"FINPLAN", 16_000.0, 1_200.0, 2.0, 10.0)
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 	var m := MachineInstance.new(spec, "finplan-1")
 	m.state = MachineInstance.State.ACTIVE
@@ -681,6 +690,7 @@ static func _test_financial_tools(t: TestFramework) -> void:
 
 	# --- Aktienbewertung ---------------------------------------------
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.set_dividend_policy(0.5)
 	# Zuletzt festgestelltes Ergebnis: 5.000 EUR (extern, keine kalk. Zinsen).
 	sim2.economy.profit_current_year = 5_000.0
@@ -703,6 +713,7 @@ static func _test_financial_tools(t: TestFramework) -> void:
 
 	# --- Lohmann-Ruchti-Ausblick -------------------------------------
 	var sim3 := SimulationEngine.new()
+	t.track(sim3)
 	sim3.specs[spec.id] = spec
 	for i in range(3):
 		var lm := MachineInstance.new(spec, "lr-%d" % i)
@@ -726,6 +737,7 @@ static func _test_financial_tools(t: TestFramework) -> void:
 
 	# Ohne aktive Anlage gibt es keinen Ausblick.
 	var empty := SimulationEngine.new()
+	t.track(empty)
 	var none := empty.lohmann_ruchti_outlook(5)
 	t.check_true("Lohmann-Ruchti: ohne Anlagen abgelehnt", not bool(none.get("ok", false)))
 
@@ -738,6 +750,7 @@ static func _test_financial_tools(t: TestFramework) -> void:
 # ------------------------------------------------------------------
 static func _test_capital_increase(t: TestFramework) -> void:
 	var sim := SimulationEngine.new()
+	t.track(sim)
 
 	# Frischer Betrieb: kein festgestellter Gewinn, keine Dividende.
 	# Der Kurs ist der Buchwert je Aktie: 50.000 / 1.000 = 50 EUR.
@@ -798,5 +811,6 @@ static func _test_capital_increase(t: TestFramework) -> void:
 
 	# Die Aktienzahl ueberlebt den Spielstand.
 	var loaded := SimulationEngine.new()
+	t.track(loaded)
 	loaded.from_dict(sim.to_dict())
 	t.check_approx("Aktienzahl im Spielstand", loaded.shares_outstanding, 1_250.0, 0.01)

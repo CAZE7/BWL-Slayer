@@ -2265,7 +2265,7 @@ func current_share_price() -> float:
 ## Lernsystem lehrt.
 func capital_increase(ratio_old_per_new: float, issue_price: float) -> Dictionary:
 	if ratio_old_per_new < 1.0:
-		return {"ok": false, "error": "Das Bezugsverhaeltnis muss mindestens 1:1 sein."}
+		return {"ok": false, "error": "Das Bezugsverhältnis muss mindestens 1:1 sein."}
 	if issue_price <= 0.0:
 		return {"ok": false, "error": "Der Ausgabekurs muss positiv sein."}
 	var old_price := current_share_price()
@@ -2276,7 +2276,10 @@ func capital_increase(ratio_old_per_new: float, issue_price: float) -> Dictionar
 			"ok": false,
 			"error": (
 				"Der Ausgabekurs (%s €) muss unter dem aktuellen Kurs (%s €) liegen,"
-				% [_format_int(issue_price), _format_int(old_price)]
+				% [
+					BWLEngine.format_number(issue_price, 2),
+					BWLEngine.format_number(old_price, 2),
+				]
 				+ " sonst zeichnet niemand die jungen Aktien."
 			),
 		}
@@ -2300,10 +2303,10 @@ func capital_increase(ratio_old_per_new: float, issue_price: float) -> Dictionar
 		"Kapitalerhöhung durchgeführt",
 		"%s junge Aktien zu %s € ausgegeben: %s € Zufluss. Mischkurs %s €, Bezugsrecht %s €." % [
 			_format_int(new_shares),
-			_format_int(issue_price),
+			BWLEngine.format_number(issue_price, 2),
 			_format_int(inflow),
-			_format_int(float(right["mixed_price"])),
-			String.num(float(right["subscription_right_value"]), 2).replace(".", ","),
+			BWLEngine.format_number(float(right["mixed_price"]), 2),
+			BWLEngine.format_number(float(right["subscription_right_value"]), 2),
 		],
 		"success"
 	)
@@ -2483,4 +2486,6 @@ func _format(value: float) -> String:
 
 
 func _format_int(value: float) -> String:
-	return String.num(round(value), 0)
+	# Mit deutscher Tausendergruppierung - Toasts und Fehlermeldungen
+	# sollen "25.000 €" zeigen, nicht "25000 €".
+	return BWLEngine.format_number(value, 0)

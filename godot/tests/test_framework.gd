@@ -17,6 +17,29 @@ var _started_at: int = 0
 ## geschrieben, die der CI-Schritt auswertet.
 var _log: FileAccess = null
 
+## Nodes, die Tests frei (ohne Szenenbaum) erzeugt haben. Solche
+## Instanzen raeumt Godot NICHT automatisch auf - jede nicht
+## freigegebene Simulation stand frueher als "ObjectDB instances
+## leaked at exit" im Testprotokoll.
+var _tracked: Array[Object] = []
+
+
+## Merkt sich eine frei erzeugte Node-Instanz zur Freigabe am Ende
+## des Testlaufs. RefCounted-Objekte brauchen das nicht; sie werden
+## trotzdem akzeptiert und schlicht ignoriert.
+func track(instance: Object) -> void:
+	if instance != null:
+		_tracked.append(instance)
+
+
+## Gibt alle gemerkten Nodes frei. Aufruf am Ende des Testlaufs,
+## nachdem alle Suiten durch sind.
+func free_tracked() -> void:
+	for instance in _tracked:
+		if instance is Node and is_instance_valid(instance):
+			(instance as Node).free()
+	_tracked.clear()
+
 
 ## Ein bestehendes Protokollhandle uebernehmen (optional – ohne Datei
 ## laeuft alles ueber stdout).

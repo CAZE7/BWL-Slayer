@@ -152,6 +152,7 @@ static func _test_production(t: TestFramework) -> void:
 	spec.material_price_per_kg = 5.0
 
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 
 	# Maschine direkt in Betrieb nehmen
@@ -236,6 +237,7 @@ static func _test_orders(t: TestFramework) -> void:
 	# tatsaechlich produziert wurde.
 	var spec := _make_spec(&"AUF", 1000.0, 100.0, 1.0, 5.0, 360.0)
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 	sim.accepting_orders = true
 
@@ -452,6 +454,7 @@ static func _test_year_close(t: TestFramework) -> void:
 	spec.material_price_per_kg = 1.4
 
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 
 	var m := MachineInstance.new(spec, "jahr-1")
@@ -548,6 +551,7 @@ static func _test_year_close(t: TestFramework) -> void:
 static func _test_demand(t: TestFramework) -> void:
 	# Ohne betriebsbereite Anlage gibt es keine Nachfrage.
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.day = 1
 	sim._generate_demand()
 	t.check_true("Ohne Anlage keine Nachfrage", sim.orders.is_empty())
@@ -601,6 +605,7 @@ static func _test_demand(t: TestFramework) -> void:
 
 		# Determinismus: derselbe Tag erzeugt denselben Auftrag.
 		var sim2 := SimulationEngine.new()
+		t.track(sim2)
 		var m2 := MachineInstance.new(spec, "nach-1")
 		m2.state = MachineInstance.State.ACTIVE
 		m2.commissioned_year = 1
@@ -618,6 +623,7 @@ static func _test_demand(t: TestFramework) -> void:
 
 	# Mehr Kapazitaet bedeutet mehr Nachfrage.
 	var sim3 := SimulationEngine.new()
+	t.track(sim3)
 	var big := _make_spec(&"GROSS", 16000.0, 1180.20, 26.0, 40.0, 72000.0)
 	var m3 := MachineInstance.new(big, "gross-1")
 	m3.state = MachineInstance.State.ACTIVE
@@ -642,6 +648,7 @@ static func _test_material(t: TestFramework) -> void:
 	spec.material_price_per_kg = 5.0
 
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 	var m := MachineInstance.new(spec, "mat-1")
 	m.state = MachineInstance.State.ACTIVE
@@ -699,6 +706,7 @@ static func _test_material(t: TestFramework) -> void:
 static func _test_full_year(t: TestFramework) -> void:
 	var spec := _make_spec(&"JAHR", 16000.0, 1180.20, 26.0, 62.0, 11637.5)
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 
 	var m := MachineInstance.new(spec, "jahr-1")
@@ -784,6 +792,7 @@ static func _test_full_year(t: TestFramework) -> void:
 static func _test_cash_logic(t: TestFramework) -> void:
 	var spec := _make_spec(&"KASSE", 10000.0, 0.0, 0.0, 0.0, 1000.0)
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 
 	var m := MachineInstance.new(spec, "kasse-1")
@@ -813,6 +822,7 @@ static func _test_cash_logic(t: TestFramework) -> void:
 	spec_mat.material_per_unit = 2.0
 	spec_mat.material_price_per_kg = 3.50
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.specs[spec_mat.id] = spec_mat
 	var m2 := MachineInstance.new(spec_mat, "kasse-2")
 	m2.state = MachineInstance.State.ACTIVE
@@ -849,6 +859,7 @@ static func _test_cash_logic(t: TestFramework) -> void:
 
 	# --- Fall 3: Fixkosten werden nicht doppelt abgezogen ---------
 	var sim3 := SimulationEngine.new()
+	t.track(sim3)
 	sim3.specs[spec.id] = spec
 	var m3 := MachineInstance.new(spec, "kasse-3")
 	m3.state = MachineInstance.State.ACTIVE
@@ -880,6 +891,7 @@ static func _test_material_logistics(t: TestFramework) -> void:
 	spec.material_price_per_kg = 2.50
 
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 	var m := MachineInstance.new(spec, "matlog-1")
 	m.state = MachineInstance.State.ACTIVE
@@ -995,6 +1007,7 @@ static func _test_material_logistics(t: TestFramework) -> void:
 
 	# Der Spielstand muss die Lieferung ueberstehen.
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.specs[spec.id] = spec
 	# Ohne betriebsbereite Anlage kennt der Betrieb keinen
 	# Materialpreis - die Bestellung wuerde abgelehnt.
@@ -1005,6 +1018,7 @@ static func _test_material_logistics(t: TestFramework) -> void:
 	var order2 := sim2.order_material(800.0, 4)
 	t.check_true("Zweite Bestellung moeglich", bool(order2.get("ok", false)))
 	var restored := SimulationEngine.new()
+	t.track(restored)
 	restored.specs[spec.id] = spec
 	restored.from_dict(sim2.to_dict())
 	t.check_approx(
@@ -1034,6 +1048,7 @@ static func _test_material_types(t: TestFramework) -> void:
 	packing.material_price_per_kg = 1.10
 
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[steel.id] = steel
 	sim.specs[packing.id] = packing
 
@@ -1151,6 +1166,7 @@ static func _test_material_types(t: TestFramework) -> void:
 
 	# Der Spielstand muss beide Bestände behalten.
 	var restored := SimulationEngine.new()
+	t.track(restored)
 	restored.specs[steel.id] = steel
 	restored.specs[packing.id] = packing
 	restored.from_dict(sim.to_dict())
@@ -1178,6 +1194,7 @@ static func _test_material_types(t: TestFramework) -> void:
 static func _test_contracts(t: TestFramework) -> void:
 	var spec := _make_spec(&"VERTR", 1000.0, 1000.0, 20.0, 60.0, 10000.0)
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 
 	var m := MachineInstance.new(spec, "vertr-1")
@@ -1271,6 +1288,7 @@ static func _test_contracts(t: TestFramework) -> void:
 
 	# Der Spielstand muss die Vertraege behalten.
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.specs[spec.id] = spec
 	# Ohne betriebsbereite Anlage gibt es keine Kapazitaet - der
 	# Vertrag wuerde an der Kapazitaetsgrenze abgelehnt.
@@ -1281,6 +1299,7 @@ static func _test_contracts(t: TestFramework) -> void:
 	var signed2 := sim2.sign_contract(500.0, 50.0, 5)
 	t.check_true("Vertrag fuer den Spielstand geschlossen", bool(signed2.get("ok", false)))
 	var restored := SimulationEngine.new()
+	t.track(restored)
 	restored.specs[spec.id] = spec
 	restored.from_dict(sim2.to_dict())
 	t.check_true("Vertrag im Spielstand", restored.contracts.size() == 1)
@@ -1320,6 +1339,7 @@ static func _test_production_chain(t: TestFramework) -> void:
 
 	# --- Ohne Vorstufe steht die Endstufe still ---
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[stage1.id] = stage1
 	sim.specs[stage2.id] = stage2
 
@@ -1343,6 +1363,7 @@ static func _test_production_chain(t: TestFramework) -> void:
 
 	# --- Mit Vorstufe laeuft die Kette ---
 	var chain := SimulationEngine.new()
+	t.track(chain)
 	chain.specs[stage1.id] = stage1
 	chain.specs[stage2.id] = stage2
 
@@ -1390,6 +1411,7 @@ static func _test_production_chain(t: TestFramework) -> void:
 	# Die Vorstufe darf nicht zum Markt verkaufen: sonst waere die
 	# Ware doppelt verkauft.
 	var chain2 := SimulationEngine.new()
+	t.track(chain2)
 	chain2.specs[stage1.id] = stage1
 	chain2.specs[stage2.id] = stage2
 	var producer2 := MachineInstance.new(stage1, "vor-1")
@@ -1403,6 +1425,7 @@ static func _test_production_chain(t: TestFramework) -> void:
 
 	# --- Rueckstau: zu wenig Vorstufenleistung bremst die Endstufe ---
 	var starved := SimulationEngine.new()
+	t.track(starved)
 	starved.specs[stage1.id] = stage1
 	starved.specs[stage2.id] = stage2
 	# Die Vorstufe liefert nur 50 am Tag - ein Viertel des
@@ -1436,10 +1459,12 @@ static func _test_production_chain(t: TestFramework) -> void:
 
 	# --- Spielstand: Zwischenprodukte ueberleben das Speichern ---
 	var saved := SimulationEngine.new()
+	t.track(saved)
 	saved.specs[stage1.id] = stage1
 	saved.specs[stage2.id] = stage2
 	saved.set_intermediate_stock(&"halb", 1234.0)
 	var restored := SimulationEngine.new()
+	t.track(restored)
 	restored.specs[stage1.id] = stage1
 	restored.specs[stage2.id] = stage2
 	restored.from_dict(saved.to_dict())
@@ -1466,6 +1491,7 @@ static func _test_chain_economics(t: TestFramework) -> void:
 	stage2.input_product_per_unit = 2.0
 
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[stage1.id] = stage1
 	sim.specs[stage2.id] = stage2
 
@@ -1515,6 +1541,7 @@ static func _test_chain_economics(t: TestFramework) -> void:
 	# teurerer Vorstufe sinkt der Ketten-Deckungsbeitrag.
 	var expensive := stage1.with_overrides({"variable_cost_per_unit": 12.0})
 	var sim2 := SimulationEngine.new()
+	t.track(sim2)
 	sim2.specs[stage1.id] = expensive
 	sim2.specs[stage2.id] = stage2
 	var producer2 := MachineInstance.new(expensive, "vor-1")

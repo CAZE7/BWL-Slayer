@@ -81,6 +81,10 @@ func _ready() -> void:
 		suite.run(t)
 		print("RUN-TESTS: Suite fertig: ", suite_path)
 
+	# Frei erzeugte Nodes (Simulationen, Berater) aufraeumen - sonst
+	# meldet der Prozess sie beim Beenden als geleakte Instanzen.
+	t.free_tracked()
+
 	# Der Bericht schliesst die Protokolldatei.
 	var code := t.report("res://test-report")
 

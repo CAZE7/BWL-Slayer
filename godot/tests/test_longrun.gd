@@ -67,6 +67,7 @@ static func _check_finite(t: TestFramework, label: String, sim: SimulationEngine
 
 static func _test_ten_years_base(t: TestFramework) -> void:
 	var sim := _build_sim()
+	t.track(sim)
 	var start_cash := sim.economy.cash
 	var start_equity := sim.economy.equity
 
@@ -109,6 +110,7 @@ static func _test_ten_years_base(t: TestFramework) -> void:
 
 	# Der Spielstand eines langen Spiels uebersteht den Roundtrip.
 	var loaded := SimulationEngine.new()
+	t.track(loaded)
 	loaded.specs[sim.specs.keys()[0]] = sim.specs.values()[0]
 	loaded.from_dict(sim.to_dict())
 	t.check_approx("Roundtrip: Kasse", loaded.economy.cash, sim.economy.cash, 0.01)
@@ -122,6 +124,7 @@ static func _test_ten_years_financed(t: TestFramework) -> void:
 	# Das Zusammenspiel aus Schuldendienst, Dividende und laufendem
 	# Geschaeft darf den Betrieb ueber zehn Jahre nicht kippen.
 	var sim := _build_sim()
+	t.track(sim)
 	var loan := sim.take_structured_loan(20_000.0, 5, "ANNUITY", 0.07)
 	var policy := sim.set_dividend_policy(0.30)
 

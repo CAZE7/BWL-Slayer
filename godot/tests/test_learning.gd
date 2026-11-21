@@ -294,6 +294,7 @@ static func _test_company_lab(t: TestFramework) -> void:
 	spec.material_type = MachineCatalog.MATERIAL_STEEL
 
 	var sim := SimulationEngine.new()
+	t.track(sim)
 	sim.specs[spec.id] = spec
 
 	# Ohne Anlage gibt es keine Aufgaben.
